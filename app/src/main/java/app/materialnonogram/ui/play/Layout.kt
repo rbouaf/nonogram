@@ -44,8 +44,12 @@ object Blocks {
 
     const val MARGIN = 8f
     const val CELL_MAX = 60f
-    /** Vertical bias: 60 % of the spare height goes above the group, toward the thumb. */
-    const val BIAS = 0.6f
+    /**
+     * Vertical bias of the clue + grid group in the field. The README's 0.6 (toward the thumb) left a
+     * ~120 dp hole above the column clues on a 15×15, which is width-bound and so has ~200 dp spare; the
+     * group is now centred in the free area (Phase 5).
+     */
+    const val BIAS = 0.5f
 
     // §3.5 zoom (Phase 4b).
     const val ZOOM_OPEN = 28f

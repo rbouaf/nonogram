@@ -28,6 +28,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -697,8 +705,14 @@ fun Field(
             }
         }
 
+        val exploring = rememberTouchExploration()
+        val marked = game.board.count { it != Mark.UNKNOWN }
         androidx.compose.foundation.layout.Box(
             Modifier.fillMaxSize()
+                .semantics {
+                    contentDescription = "Board, $W by $H, $marked of ${W * H} cells marked" +
+                        if (exploring) ". Touch a clue to hear it; double-tap a cell to mark it with the current tool." else ""
+                }
                 .onGloballyPositioned { c ->
                     ui.fieldRoot = c.boundsInRoot().topLeft
                     val o = c.boundsInRoot().topLeft
@@ -737,13 +751,18 @@ fun Field(
                         var drawing = false
                         var startCell = -1
                         val selBefore = ui.sel
+                        /** The geometry as of now: auto-scroll moves the pan between frames, faster than recomposition. */
+                        fun now(): FieldGeo {
+                            val z = zoomGeoState.value
+                            return if (z != null && !ui.peek) FieldGeo.of(z.L, d, z.fieldW, z.fieldH, ui.panX, ui.panY) else geoState.value
+                        }
                         fun clampToView(p: Offset): Offset {
-                            val g = geoState.value
+                            val g = now()
                             if (!g.zoomed) return p
                             return Offset(p.x.coerceIn(g.view.left, g.view.right - 1f), p.y.coerceIn(g.view.top, g.view.bottom - 1f))
                         }
                         fun extend(p0: Offset) {
-                            val g = geoState.value
+                            val g = now()
                             val p = clampToView(p0)
                             game.extendStroke(g.rowAt(p.y).coerceIn(-1, H), g.colAt(p.x).coerceIn(-1, W))
                             ui.finger = p0
@@ -769,15 +788,53 @@ fun Field(
                         var transforming = false
                         val deadline = down.uptimeMillis + longMs
                         var last = down.uptimeMillis
+                        var fingerAt = down.position
+                        var scrolledAt = 0L
+                        /**
+                         * Zoomed in, a stroke that reaches the visible edge along its own axis scrolls the board
+                         * under the finger (Phase 5 gap a): the deeper into the edge band, the faster, up to ten
+                         * cells a second. Returns the pan velocity in px/ms.
+                         */
+                        fun edgeVelocity(): Offset {
+                            val g = now()
+                            val s = game.stroke ?: return Offset.Zero
+                            if (!g.zoomed || !drawing || s.axis < 0 || s.stopped) return Offset.Zero
+                            val band = maxOf(g.c * 0.8f, 20f * d)
+                            val max = 10f * (g.c + Blocks.MINOR * d) / 1000f
+                            fun v(p: Float, lo: Float, hi: Float): Float = when {
+                                p > hi - band -> -max * ((p - (hi - band)) / band).coerceIn(0.25f, 1f)
+                                p < lo + band -> max * (((lo + band) - p) / band).coerceIn(0.25f, 1f)
+                                else -> 0f
+                            }
+                            return if (s.axis == StrokeView.AXIS_ROW) Offset(v(fingerAt.x, g.view.left, g.view.right), 0f)
+                            else Offset(0f, v(fingerAt.y, g.view.top, g.view.bottom))
+                        }
                         while (true) {
                             val onStart = game.stroke?.let { it.axis < 0 && !it.stopped } == true
-                            val ev: PointerEvent? = if (drawing && !longDone && onStart) {
-                                withTimeoutOrNull(maxOf(1L, deadline - last)) { awaitPointerEvent() }
-                            } else awaitPointerEvent()
+                            val waitLong = drawing && !longDone && onStart
+                            val scroll = edgeVelocity()
+                            val scrolling = scroll != Offset.Zero
+                            if (!scrolling) scrolledAt = 0L
+                            val timeout: Long? = when {
+                                waitLong -> maxOf(1L, deadline - last)
+                                scrolling -> 16L
+                                else -> null
+                            }
+                            val ev: PointerEvent? = if (timeout != null) withTimeoutOrNull(timeout) { awaitPointerEvent() } else awaitPointerEvent()
                             if (ev == null) {
-                                longDone = true
-                                if (game.switchStrokeTool()) ui.borrowed = true
-                                ui.holdAt = null
+                                if (waitLong) {
+                                    longDone = true
+                                    if (game.switchStrokeTool()) ui.borrowed = true
+                                    ui.holdAt = null
+                                } else if (scrolling) {
+                                    val t = SystemClock.uptimeMillis()
+                                    val dt = if (scrolledAt == 0L) 16L else (t - scrolledAt).coerceIn(1L, 50L)
+                                    scrolledAt = t
+                                    val g = now()
+                                    ui.panX = g.clampPanX(ui.panX + scroll.x * dt)
+                                    ui.panY = g.clampPanY(ui.panY + scroll.y * dt)
+                                    extend(fingerAt)
+                                }
                                 continue
                             }
                             last = ev.changes.maxOf { it.uptimeMillis }
@@ -804,6 +861,7 @@ fun Field(
                                 // Never skip a cell: walk every historical sample, then the current position.
                                 for (h in ch.historical) extend(h.position)
                                 extend(ch.position)
+                                fingerAt = ch.position
                                 ch.consume()
                                 if (game.stroke == null) drawing = false
                             }
@@ -822,6 +880,71 @@ fun Field(
                     } else drawField(geo, 1f, chromeA)
                 },
         )
+        // The board is one Canvas, so TalkBack sees nothing in it. With touch exploration on, invisible nodes
+        // sit over every visible clue and cell: clues read their numbers, cells their state, and a cell's
+        // double-tap marks it with the current tool (custom actions offer both tools). Phase 5 gap b.
+        if (exploring && !locked && game.status == Status.PLAYING && !game.paused) A11yLayer(game, geo, clues)
+    }
+}
+
+@Composable
+private fun rememberTouchExploration(): Boolean {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val am = remember { ctx.getSystemService(android.view.accessibility.AccessibilityManager::class.java) }
+    var on by remember { mutableStateOf(am?.isTouchExplorationEnabled == true) }
+    androidx.compose.runtime.DisposableEffect(am) {
+        val l = android.view.accessibility.AccessibilityManager.TouchExplorationStateChangeListener { on = it }
+        am?.addTouchExplorationStateChangeListener(l)
+        onDispose { am?.removeTouchExplorationStateChangeListener(l) }
+    }
+    return on
+}
+
+private fun stateWord(v: Byte) = when (v) { Mark.FILLED -> "filled"; Mark.CROSSED -> "crossed"; else -> "empty" }
+
+@Composable
+private fun A11yLayer(game: Game, g: FieldGeo, clues: app.materialnonogram.engine.Clues) {
+    val W = game.w; val H = game.h
+    val b = game.board
+    val sat = game.satisfied
+    val bad = game.contradicted
+    val tool = game.tool
+    val d = LocalDensity.current.density
+    @Composable
+    fun node(l: Float, t: Float, w: Float, h: Float, mod: Modifier) {
+        androidx.compose.foundation.layout.Box(
+            Modifier.offset { androidx.compose.ui.unit.IntOffset(l.toInt(), t.toInt()) }
+                .size((w / d).dp, (h / d).dp).then(mod),
+        )
+    }
+    fun clueText(line: Int): String {
+        val c = clues.line(line)
+        val name = if (line < H) "Row ${line + 1}" else "Column ${line - H + 1}"
+        return "$name clue " + (if (c.isEmpty()) "0" else c.joinToString(" ")) + when { bad[line] -> ", can't fit any more"; sat[line] -> ", done"; else -> "" }
+    }
+    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+        val bandTop = if (g.zoomed) 0f else g.gridTop - g.L.colBand * d
+        // Only cells whose centre is on screen: a zoomed board draws a margin of hidden ones under the bands.
+        val cols = (g.firstCol()..g.lastCol()).filter { g.x(it) + g.c / 2 in g.view.left..g.view.right }
+        val rows = (g.firstRow()..g.lastRow()).filter { g.y(it) + g.c / 2 in g.view.top..g.view.bottom }
+        for (x in cols) node(g.x(x), bandTop, g.c, g.gridTop - bandTop, Modifier.semantics { contentDescription = clueText(H + x) })
+        for (y in rows) {
+            node(Blocks.MARGIN * d, g.y(y), g.gridLeft - Blocks.MARGIN * d, g.c, Modifier.semantics { contentDescription = clueText(y) })
+            for (x in cols) {
+                val i = y * W + x
+                val v = b[i]
+                val act = if (tool == Tool.FILL) (if (v == Mark.FILLED) "Clear" else "Fill") else (if (v == Mark.CROSSED) "Clear" else "Cross")
+                node(g.x(x), g.y(y), g.c, g.c, Modifier.semantics {
+                    contentDescription = "Row ${y + 1}, column ${x + 1}, ${stateWord(v)}"
+                    role = androidx.compose.ui.semantics.Role.Button
+                    onClick(label = act) { game.tap(i, tool); true }
+                    customActions = listOf(
+                        androidx.compose.ui.semantics.CustomAccessibilityAction("Fill") { game.tap(i, Tool.FILL) },
+                        androidx.compose.ui.semantics.CustomAccessibilityAction("Cross") { game.tap(i, Tool.CROSS) },
+                    )
+                })
+            }
+        }
     }
 }
 
