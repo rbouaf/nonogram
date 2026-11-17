@@ -237,6 +237,15 @@ private class Roles(cs: ColorScheme) {
 
 /** A finishing line's ripple steps along it at Sudoku's pace: one tile every 45 ms from where the stroke ended. */
 private const val RIPPLE_STEP = 45L
+
+/**
+ * The ripple's shapes, taken in turn along the line (user, 2026-11-17: "alternate between 5 shapes"):
+ * Sudoku's SoftBurst first, then four more of similar weight with distinct silhouettes.
+ */
+private val RIPPLE_SHAPES get() = listOf(
+    MaterialShapes.SoftBurst, MaterialShapes.Clover4Leaf, MaterialShapes.Cookie9Sided,
+    MaterialShapes.Flower, MaterialShapes.Sunny,
+)
 private const val BUMP_MS = 340f
 
 /** A spring-like kick over [BUMP_MS]: up to 1 at ~70 ms, a small dip below 0, settled by the end. */
@@ -327,6 +336,8 @@ fun Field(
     val pops = remember(game) { mutableStateMapOf<Int, Animatable<Float, *>>() }
     val crossIn = remember(game) { mutableStateMapOf<Int, Animatable<Float, *>>() }
     val rips = remember(game) { mutableStateMapOf<Int, Animatable<Float, *>>() }
+    /** Which of [RIPPLE_SHAPES] each tile turns into: its distance along the line, mod 5. */
+    val ripShape = remember(game) { IntArray(W * H) }
     val shake = remember { Animatable(0f) }
     val lineShake = remember(game) { mutableStateMapOf<Int, Animatable<Float, *>>() }
     val blink = remember(game) { mutableStateMapOf<Int, Animatable<Float, *>>() }
@@ -379,7 +390,7 @@ fun Field(
     /**
      * Sudoku's unit celebration, copied (its Board.kt, Fx.Placed): a wave runs along each finished line
      * from the cell the stroke ended on; each tile springs to 1 (hitIn) and wobbles back (loading). The
-     * draw turns that into Square → SoftBurst, +22 %, +14°, washed in primary.
+     * draw turns that into Square → one of [RIPPLE_SHAPES] (in turn along the line), +22 %, +14°, washed in primary.
      */
     fun lineWave(lines: List<Int>, origin: Int): Int {
         val wave = HashMap<Int, Int>()
@@ -388,6 +399,7 @@ fun Field(
             val k = if (l < H) abs(j % W - oc) else abs(j / W - or)
             wave[j] = minOf(wave[j] ?: Int.MAX_VALUE, k)
         }
+        for ((j, k) in wave) ripShape[j] = k % RIPPLE_SHAPES.size
         for ((j, k) in wave) scope.launch {
             if (!springs.reduced) delay(k * RIPPLE_STEP)
             val a = rips.getOrPut(j) { Animatable(0f) }
@@ -721,7 +733,7 @@ fun Field(
                         // Sudoku's drawTile ripple: the tile's own shape morphs toward SoftBurst (unclamped, so the
                         // spring's overshoot extrapolates it), turns 14°, swells 22 %, and is washed in primary.
                         val rest = if (cookieCell) MaterialShapes.Cookie4Sided else Shp.square
-                        morphPath(Morphs.of(rest, Shp.ripple), rv, Size(c, c), shapePath)
+                        morphPath(Morphs.of(rest, RIPPLE_SHAPES[ripShape[i]]), rv, Size(c, c), shapePath)
                         val wash = roles.ripple.copy(alpha = rv.coerceIn(0f, 1f) * 0.92f * alpha)
                         rotate(14f * rv, Offset(cx, cy)) {
                             scale(sc, sc, Offset(cx, cy)) {
@@ -910,6 +922,8 @@ fun Field(
                         }
                         // A hold on a filled cell measures its runs, with or without "hold for the other tool".
                         var longDone = !drawing || (!longPress && !startFilled())
+                        var moved = false
+                        val slop = viewConfiguration.touchSlop
                         var transforming = false
                         val deadline = down.uptimeMillis + longMs
                         var last = down.uptimeMillis
@@ -946,23 +960,31 @@ fun Field(
                                 else -> null
                             }
                             val ev: PointerEvent? = if (timeout != null) withTimeoutOrNull(timeout) { awaitPointerEvent() } else awaitPointerEvent()
+                            /**
+                             * The hold has lasted long enough. Checked on every event as well as on the timeout: a
+                             * real touchscreen reports a resting finger many times a second (pressure and position
+                             * noise), so a timeout alone never elapsed on the phone and holds never fired.
+                             */
+                            fun fireLong() {
+                                longDone = true
+                                if (startFilled()) {
+                                    // Measure: the stroke is dropped (nothing changes) and the runs show until lift.
+                                    game.cancelStroke(); drawing = false
+                                    val r0 = startCell / W; val c0 = startCell % W
+                                    fun filled(r: Int, c: Int) = r in 0 until H && c in 0 until W && game.board[r * W + c] == Mark.FILLED
+                                    var a = c0; while (filled(r0, a - 1)) a--
+                                    var bb = c0; while (filled(r0, bb + 1)) bb++
+                                    var t = r0; while (filled(t - 1, c0)) t--
+                                    var u = r0; while (filled(u + 1, c0)) u++
+                                    ui.measureRow = bb - a + 1; ui.measureCol = u - t + 1
+                                    ui.measure = startCell
+                                    buzz.highlight()
+                                } else if (game.switchStrokeTool()) ui.borrowed = true
+                                ui.holdAt = null
+                            }
                             if (ev == null) {
                                 if (waitLong) {
-                                    longDone = true
-                                    if (startFilled()) {
-                                        // Measure: the stroke is dropped (nothing changes) and the runs show until lift.
-                                        game.cancelStroke(); drawing = false
-                                        val r0 = startCell / W; val c0 = startCell % W
-                                        fun filled(r: Int, c: Int) = r in 0 until H && c in 0 until W && game.board[r * W + c] == Mark.FILLED
-                                        var a = c0; while (filled(r0, a - 1)) a--
-                                        var bb = c0; while (filled(r0, bb + 1)) bb++
-                                        var t = r0; while (filled(t - 1, c0)) t--
-                                        var u = r0; while (filled(u + 1, c0)) u++
-                                        ui.measureRow = bb - a + 1; ui.measureCol = u - t + 1
-                                        ui.measure = startCell
-                                        buzz.highlight()
-                                    } else if (game.switchStrokeTool()) ui.borrowed = true
-                                    ui.holdAt = null
+                                    fireLong()
                                 } else if (scrolling) {
                                     val t = SystemClock.uptimeMillis()
                                     val dt = if (scrolledAt == 0L) 16L else (t - scrolledAt).coerceIn(1L, 50L)
@@ -975,6 +997,7 @@ fun Field(
                                 continue
                             }
                             last = ev.changes.maxOf { it.uptimeMillis }
+                            if (waitLong && last >= deadline && ev.changes.count { it.pressed } == 1) fireLong()
                             val pressed = ev.changes.count { it.pressed }
                             if (pressed >= 2 || transforming) {
                                 // A second finger cancels the stroke (it is reverted) and becomes pinch/pan.
@@ -992,10 +1015,17 @@ fun Field(
                             val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
                             if (!ch.pressed) {
                                 // The lift can carry the last stretch of a flick: walk it before ending.
-                                if (drawing) { for (h in ch.historical) extend(h.position); extend(ch.position); game.endStroke() }
+                                if (drawing) {
+                                    if (moved || (ch.position - down.position).getDistance() > slop) { for (h in ch.historical) extend(h.position); extend(ch.position) }
+                                    game.endStroke()
+                                }
                                 drawing = false
                                 break
                             }
+                            // Touch slop: until the finger has really moved, it is resting, not drawing — a resting
+                            // finger drifts a few px and must not slide into the next cell and mark it.
+                            if (!moved && (ch.position - down.position).getDistance() > slop) moved = true
+                            if (drawing && !moved) { ch.consume(); continue }
                             if (drawing) {
                                 // Never skip a cell: walk every historical sample, then the current position.
                                 for (h in ch.historical) extend(h.position)
