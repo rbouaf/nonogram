@@ -1,11 +1,11 @@
 package app.materialnonogram.ui.play
 
-import androidx.compose.ui.text.TextLayoutResult
-import androidx.compose.ui.text.TextMeasurer
-import androidx.compose.ui.text.TextStyle
+import android.graphics.Paint
+import android.graphics.Typeface
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import app.materialnonogram.engine.Clues
 import app.materialnonogram.ui.theme.flex
 
@@ -59,29 +59,35 @@ object Blocks {
 }
 
 /**
- * Tabular digit advances of the bundled Google Sans Flex, measured with the same [TextStyle] the
- * clues are drawn with (so `tnum`, `opsz` and every axis match; CLAUDE.md: a measuring path must copy
- * `fontFeatureSettings`). Sizes are dp; `opsz` = size (D2).
+ * Tabular digit advances of the bundled Google Sans Flex, measured and drawn with one platform
+ * [Paint] per (size, wdth, GRAD): the typeface is Compose's own resolution of [flex] (so every axis
+ * and `opsz` match the rest of the app) and the paint carries `tnum` itself (CLAUDE.md: a measuring
+ * paint that drops `fontFeatureSettings` silently measures proportional figures). Drawing through the
+ * same paint keeps layout and ink in step, and costs a few µs a numeral where a TextLayoutResult
+ * costs ~70 (measured on the emulator: 6 ms a frame for a 20×20's row band).
  */
-class ClueFont(private val measurer: TextMeasurer, private val density: Density) {
+class ClueFont(private val resolver: FontFamily.Resolver, private val density: Density) {
+    private val paints = HashMap<Long, Paint>()
     private val adv = HashMap<Long, Float>()
-    private val layouts = HashMap<String, TextLayoutResult>()
+    private val strings = Array(100) { it.toString() }
 
-    fun style(fs: Float, wdth: Int, grad: Int): TextStyle = TextStyle(
-        fontFamily = flex(fs, Blocks.WGHT, wdth, 0, grad),
-        fontSize = with(density) { fs.dp.toSp() },
-        lineHeight = with(density) { fs.dp.toSp() },
-        fontFeatureSettings = "tnum",
-        letterSpacing = 0.sp,
-    )
+    private fun key(fs: Float, wdth: Int, grad: Int) = (Math.round(fs * 20f).toLong() shl 20) or (wdth.toLong() shl 8) or grad.toLong()
+
+    fun paint(fs: Float, wdth: Int, grad: Int): Paint = paints.getOrPut(key(fs, wdth, grad)) {
+        val tf = resolver.resolve(flex(fs, Blocks.WGHT, wdth, 0, grad), FontWeight(Blocks.WGHT)).value as Typeface
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = tf
+            textSize = with(density) { fs.dp.toPx() }
+            fontFeatureSettings = "tnum"
+            letterSpacing = 0f
+            isSubpixelText = true
+        }
+    }
 
     /** Advance of one tabular digit in em. GRAD never moves it (README §2.1), so it is measured at 0. */
-    fun advEm(fs: Float, wdth: Int): Float {
-        val key = (Math.round(fs * 20f).toLong() shl 16) or wdth.toLong()
-        return adv.getOrPut(key) {
-            val r = measurer.measure("0000000000", style(fs, wdth, 0), softWrap = false)
-            r.size.width / 10f / with(density) { fs.dp.toPx() }
-        }
+    fun advEm(fs: Float, wdth: Int): Float = adv.getOrPut(key(fs, wdth, 0)) {
+        val p = paint(fs, wdth, 0)
+        p.measureText("0000000000") / 10f / p.textSize
     }
 
     /** The widest integer wdth (25–151) whose tabular advance is ≤ [targetEm]. Advance is monotonic in wdth. */
@@ -93,11 +99,7 @@ class ClueFont(private val measurer: TextMeasurer, private val density: Density)
         return a
     }
 
-    /** One clue numeral, laid out once per (text, size, wdth, GRAD). Colour is applied when drawn. */
-    fun numeral(text: String, fs: Float, wdth: Int, grad: Int): TextLayoutResult {
-        val key = "$text|${Math.round(fs * 20f)}|$wdth|$grad"
-        return layouts.getOrPut(key) { measurer.measure(text, style(fs, wdth, grad), softWrap = false) }
-    }
+    fun text(n: Int): String = if (n in strings.indices) strings[n] else n.toString()
 }
 
 /** One puzzle's geometry at one cell size: cell, numeral sizes and widths, band sizes. All dp. */

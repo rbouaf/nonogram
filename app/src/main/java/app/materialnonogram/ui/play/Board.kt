@@ -50,10 +50,9 @@ import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.drawText
-import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import app.materialnonogram.engine.Lines
 import app.materialnonogram.game.Fx
 import app.materialnonogram.game.Game
@@ -101,8 +100,12 @@ class PlayUi {
     val peekA = Animatable(0f)
     /** The board can zoom (its fit cell is under [Blocks.ZOOM_BELOW]). */
     var zoomable by mutableStateOf(false)
-    /** The field's top-left in Play's root box, and the current cell size in px (for overlays). */
-    var fieldAt by mutableStateOf(Offset.Zero)
+    /** The field's and Play's top-left in the window; overlays draw in Play's box, so they need both. */
+    var fieldRoot by mutableStateOf(Offset.Zero)
+    var playRoot by mutableStateOf(Offset.Zero)
+    /** The field's top-left in Play's root box. */
+    val fieldAt: Offset get() = fieldRoot - playRoot
+    /** The current cell size in px (for overlays). */
     var cellPx by mutableFloatStateOf(0f)
 }
 
@@ -196,6 +199,8 @@ private class Roles(cs: ColorScheme) {
     val ring = cs.primary
     val rip = cs.primary
     val pin = cs.outlineVariant
+    /** The page: block gutters and in-block hairlines are the page showing through. */
+    val page = cs.surface
     val miniBg = cs.surfaceContainerHigh
 }
 
@@ -232,8 +237,8 @@ fun Field(
     val buzz = LocalBuzz.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
-    val measurer = rememberTextMeasurer(cacheSize = 8)
-    val font = remember(density) { ClueFont(measurer, density) }
+    val resolver = androidx.compose.ui.platform.LocalFontFamilyResolver.current
+    val font = remember(density, resolver) { ClueFont(resolver, density) }
     val roles = remember(cs) { Roles(cs) }
     val clues = game.deal.puzzle.clues
     val W = game.w; val H = game.h
@@ -395,6 +400,25 @@ fun Field(
         }
         val zoomGeoState = rememberUpdatedState(zoomGeo)
         LaunchedEffect(ui.peek) { ui.peekA.animateTo(if (ui.peek) 1f else 0f, if (ui.peek) springs.effects() else springs.spatial()) }
+        // Zoomed in, a hint brings what it points at into view: its line at stage 1, its cell after.
+        val hintNow = game.hint
+        LaunchedEffect(hintNow?.stage, hintNow?.hint?.cell) {
+            val zg = zoomGeoState.value ?: return@LaunchedEffect
+            val h = hintNow ?: return@LaunchedEffect
+            if (ui.peek) return@LaunchedEffect
+            val cell = h.hint.cell
+            val line = h.hint.line
+            val r = cell / W; val c = cell % W
+            val showRow = h.stage >= 2 || line < H
+            val showCol = h.stage >= 2 || line >= H
+            val cx = zg.x(c) + zg.c / 2; val cy = zg.y(r) + zg.c / 2
+            val inX = cx in zg.view.left + zg.c..zg.view.right - zg.c
+            val inY = cy in zg.view.top + zg.c..zg.view.bottom - zg.c
+            if ((!showCol || inX) && (!showRow || inY)) return@LaunchedEffect
+            val fx = if (showCol && !inX) (zg.L.pos(c) + zg.L.c / 2) / zg.L.gridW else (zg.view.center.x - zg.gridLeft - zg.panX) / zg.gridWpx
+            val fy = if (showRow && !inY) (zg.L.pos(r) + zg.L.c / 2) / zg.L.gridH else (zg.view.center.y - zg.gridTop - zg.panY) / zg.gridHpx
+            panTo(ui, zg, fx, fy, springs)
+        }
 
         val path = remember { Path() }
         val shapePath = remember { Path() }
@@ -436,6 +460,11 @@ fun Field(
                     }
                 }
             }
+            // Each effect map is read once per frame into a plain array: snapshot-map reads per cell add up.
+            val shakeL = FloatArray(W + H).also { a -> for ((l, v) in lineShake) a[l] = v.value }
+            val blinkL = FloatArray(W + H).also { a -> for ((l, v) in blink) a[l] = v.value }
+            val popC = if (pops.isEmpty()) null else FloatArray(W * H) { 1f }.also { a -> for ((i, v) in pops) a[i] = v.value }
+            val inC = if (crossIn.isEmpty()) null else FloatArray(W * H) { 1f }.also { a -> for ((i, v) in crossIn) a[i] = v.value }
             fun filled(x: Int, y: Int) = x in 0 until W && y in 0 until H && b[y * W + x] == Mark.FILLED
             fun dealScale(i: Int): Float {
                 if (!revealed) return 0f
@@ -454,8 +483,8 @@ fun Field(
                 val left = Blocks.MARGIN * one
                 for (y in rows) {
                     val top = g.y(y)
-                    val sh = lineShake[y]?.value ?: 0f
-                    val bl = blink[y]?.value ?: 0f
+                    val sh = shakeL[y]
+                    val bl = blinkL[y]
                     val lineA = alpha * chromeA
                     if (bad[y] || bl > 0f) pill(path, left, top, g.gridLeft, top + c, c / 2, true, roles.errorWash.copy(alpha = roles.errorWash.alpha * lineA * maxOf(if (bad[y]) 1f else 0f, bl)))
                     else if (y == selR && playing) pill(path, left, top, g.gridLeft, top + c, c / 2, true, roles.pill.copy(alpha = roles.pill.alpha * lineA))
@@ -466,10 +495,12 @@ fun Field(
                     val grad = if (sat[y] && !bad[y]) Blocks.GRAD_DONE else Blocks.GRAD_ON
                     var x = g.gridLeft - Blocks.PAD_R * one + sh
                     val baseline = top + c / 2 + Blocks.FIG_H * L.fsR * one / 2
+                    val p = font.paint(L.fsR, Blocks.ROW_WDTH, grad)
+                    p.color = color.copy(alpha = color.alpha * bandA).toArgb()
                     for (k in clue.indices.reversed()) {
-                        val t = font.numeral(clue[k].toString(), L.fsR, Blocks.ROW_WDTH, grad)
-                        x -= t.size.width
-                        drawText(t, color = color.copy(alpha = color.alpha * bandA), topLeft = Offset(x, baseline - t.firstBaseline))
+                        val t = font.text(clue[k])
+                        x -= p.measureText(t)
+                        drawContext.canvas.nativeCanvas.drawText(t, x, baseline, p)
                         x -= L.rowGap * one
                     }
                 }
@@ -481,8 +512,8 @@ fun Field(
                 for (x in cols) {
                     val line = H + x
                     val left = g.x(x)
-                    val sh = lineShake[line]?.value ?: 0f
-                    val bl = blink[line]?.value ?: 0f
+                    val sh = shakeL[line]
+                    val bl = blinkL[line]
                     val lineA = alpha * chromeA
                     if (bad[line] || bl > 0f) pill(path, left, bandTop, left + c, g.gridTop, c / 2, false, roles.errorWash.copy(alpha = roles.errorWash.alpha * lineA * maxOf(if (bad[line]) 1f else 0f, bl)))
                     else if (x == selC && playing) pill(path, left, bandTop, left + c, g.gridTop, c / 2, false, roles.pill.copy(alpha = roles.pill.alpha * lineA))
@@ -495,11 +526,14 @@ fun Field(
                     val fs = L.fsC
                     val figH = Blocks.FIG_H * fs * one
                     val pitch = L.colPitch * one
+                    val argb = color.copy(alpha = color.alpha * bandA).toArgb()
                     for (k in clue.indices) {
                         val n = clue[clue.size - 1 - k]
-                        val t = font.numeral(n.toString(), fs, if (n >= 10) L.wdth2 else L.wdth1, grad)
+                        val p = font.paint(fs, if (n >= 10) L.wdth2 else L.wdth1, grad)
+                        p.color = argb
+                        val t = font.text(n)
                         val baseline = g.gridTop - Blocks.COL_PAD_B * one - k * pitch - (pitch - figH) / 2 + sh
-                        drawText(t, color = color.copy(alpha = color.alpha * bandA), topLeft = Offset(cx - t.size.width / 2f, baseline - t.firstBaseline))
+                        drawContext.canvas.nativeCanvas.drawText(t, cx - p.measureText(t) / 2f, baseline, p)
                     }
                 }
             }
@@ -509,11 +543,30 @@ fun Field(
                 val blockR = minOf(12f, 0.42f * L.c) * one
                 val innerR = 1f * one
                 val fillR = minOf(8f, 0.3f * L.c) * one
-                // Wells.
+                // Wells. At rest each 5×5 block is one rounded tile with page-coloured hairlines over it;
+                // only cells that differ from a plain well (dealing, highlighted, hinted, in a wave) are drawn one by one.
+                val fast = revealed && !dealOn
+                if (fast) {
+                    val wc = roles.well.copy(alpha = roles.well.alpha * alpha)
+                    val hair = roles.page.copy(alpha = alpha)
+                    for (by in rows.first / 5..rows.last / 5) for (bx in cols.first / 5..cols.last / 5) {
+                        val x0 = bx * 5; val x1 = minOf(W - 1, x0 + 4); val y0 = by * 5; val y1 = minOf(H - 1, y0 + 4)
+                        val l = g.x(x0); val t = g.y(y0); val r = g.x(x1) + c; val bt = g.y(y1) + c
+                        drawRoundRect(wc, Offset(l, t), Size(r - l, bt - t), CornerRadius(blockR))
+                        for (k in x0 + 1..x1) drawRect(hair, Offset(g.x(k) - minor, t), Size(minor, bt - t))
+                        for (k in y0 + 1..y1) drawRect(hair, Offset(l, g.y(k) - minor), Size(r - l, minor))
+                    }
+                }
                 for (y in rows) for (x in cols) {
                     val i = y * W + x
+                    if (fast) {
+                        val special = (playing && (y == selR || x == selC)) || i == hintCell ||
+                            (hintLine >= 0 && (if (hintLine < H) y == hintLine else x == hintLine - H)) ||
+                            (rip != null && rip[i] > 0f) || shakeL[y] != 0f || shakeL[H + x] != 0f
+                        if (!special) continue
+                    }
                     val ds = dealScale(i); if (ds <= 0.001f) continue
-                    val X = g.x(x) + (lineShake[y]?.value ?: 0f); val Y = g.y(y) + (lineShake[H + x]?.value ?: 0f)
+                    val X = g.x(x) + shakeL[y]; val Y = g.y(y) + shakeL[H + x]
                     val hl = playing && (y == selR || x == selC)
                     var col = if (hl) roles.wellHl else roles.well
                     if (hintLine >= 0 && (if (hintLine < H) y == hintLine else x == hintLine - H)) col = lerp(col, roles.hintWash, brV * 0.9f)
@@ -542,13 +595,13 @@ fun Field(
                         val i = y * W + x
                         if (b[i] != Mark.FILLED) continue
                         val ds = dealScale(i); if (ds <= 0.001f) continue
-                        val X = g.x(x) + (lineShake[y]?.value ?: 0f); val Y = g.y(y) + (lineShake[H + x]?.value ?: 0f)
+                        val X = g.x(x) + shakeL[y]; val Y = g.y(y) + shakeL[H + x]
                         val R = filled(x + 1, y) && (x + 1) % 5 != 0
                         val Lf = filled(x - 1, y) && x % 5 != 0
                         val D = filled(x, y + 1) && (y + 1) % 5 != 0
                         val U = filled(x, y - 1) && y % 5 != 0
                         val rv = rip?.get(i) ?: 0f
-                        val s = (pops[i]?.value ?: 1f) * ds * (1f + 0.12f * rv)
+                        val s = (popC?.get(i) ?: 1f) * ds * (1f + 0.12f * rv)
                         val hl = playing && (y == selR || x == selC)
                         val isProv = prov?.get(i) == true
                         val col = when { isProv -> roles.provisional; hl -> roles.fillHl; else -> roles.fill }
@@ -556,15 +609,26 @@ fun Field(
                         val w = c + if (R) minor else 0f
                         val h = c + if (D) minor else 0f
                         val cx = X + c / 2; val cy = Y + c / 2
-                        scale(s, s, Offset(cx, cy)) {
-                            path.rewind()
-                            path.addRoundRect(RoundRect(X, Y, X + w, Y + h, CornerRadius(rr(Lf, U)), CornerRadius(rr(R, U)), CornerRadius(rr(R, D)), CornerRadius(rr(Lf, D))))
-                            drawPath(path, col.copy(alpha = alpha))
+                        val a0 = rr(Lf, U); val a1 = rr(R, U); val a2 = rr(R, D); val a3 = rr(Lf, D)
+                        val uniform = a0 == a1 && a1 == a2 && a2 == a3
+                        val fc = col.copy(alpha = alpha)
+                        fun body(color: Color) {
+                            if (uniform) drawRoundRect(color, Offset(X, Y), Size(w, h), CornerRadius(a0))
+                            else {
+                                path.rewind()
+                                path.addRoundRect(RoundRect(X, Y, X + w, Y + h, CornerRadius(a0), CornerRadius(a1), CornerRadius(a2), CornerRadius(a3)))
+                                drawPath(path, color)
+                            }
+                        }
+                        val draw: DrawScope.() -> Unit = {
+                            body(fc)
                             val seam = lerp(roles.seam, col, wonV).copy(alpha = alpha)
                             if (R) drawRect(seam, Offset(X + c, Y), Size(minor, c))
                             if (D) drawRect(seam, Offset(X, Y + c), Size(c, minor))
-                            if (rv > 0f) drawPath(path, roles.rip.copy(alpha = 0.45f * rv * alpha))
+                            // The wave lifts a fill toward white: a flash of light in either theme, never a muddy wash.
+                            if (rv > 0f) body(Color.White.copy(alpha = 0.38f * rv * alpha))
                         }
+                        if (s == 1f) draw() else scale(s, s, Offset(cx, cy)) { draw() }
                     }
                     // Crosses: two round-capped strokes, 31 % → 69 %; an auto-cross is quieter (0.72×, outline).
                     val crossA = alpha * (1f - wonV)
@@ -572,9 +636,9 @@ fun Field(
                         val i = y * W + x
                         if (b[i] != Mark.CROSSED) continue
                         val ds = dealScale(i); if (ds <= 0.001f) continue
-                        val X = g.x(x) + (lineShake[y]?.value ?: 0f); val Y = g.y(y) + (lineShake[H + x]?.value ?: 0f)
+                        val X = g.x(x) + shakeL[y]; val Y = g.y(y) + shakeL[H + x]
                         val a = auto[i]
-                        val p = crossIn[i]?.value ?: 1f
+                        val p = inC?.get(i) ?: 1f
                         val k = (if (a) 0.72f else 1f) * (0.55f + 0.45f * p) * ds
                         val half = 0.19f * c * k
                         val sw = (if (a) 0.09f else 0.105f) * c
@@ -636,7 +700,7 @@ fun Field(
         androidx.compose.foundation.layout.Box(
             Modifier.fillMaxSize()
                 .onGloballyPositioned { c ->
-                    ui.fieldAt = c.positionInParent()
+                    ui.fieldRoot = c.boundsInRoot().topLeft
                     val o = c.boundsInRoot().topLeft
                     rootAt = o
                     val g = geoState.value
@@ -672,6 +736,7 @@ fun Field(
                         }
                         var drawing = false
                         var startCell = -1
+                        val selBefore = ui.sel
                         fun clampToView(p: Offset): Offset {
                             val g = geoState.value
                             if (!g.zoomed) return p
@@ -719,7 +784,7 @@ fun Field(
                             val pressed = ev.changes.count { it.pressed }
                             if (pressed >= 2 || transforming) {
                                 // A second finger cancels the stroke (it is reverted) and becomes pinch/pan.
-                                if (drawing) { game.cancelStroke(); drawing = false; ui.finger = null; ui.holdAt = null; ui.borrowed = false }
+                                if (drawing) { game.cancelStroke(); drawing = false; ui.finger = null; ui.holdAt = null; ui.borrowed = false; ui.sel = selBefore }
                                 if (zg != null && pressed >= 2) {
                                     transforming = true
                                     transform(ev, ui, zoomGeoState.value ?: zg, d)

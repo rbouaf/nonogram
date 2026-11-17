@@ -57,6 +57,8 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalViewConfiguration
@@ -162,7 +164,7 @@ fun PlayScreen(
         if (game.autoCross != settings.autoCross || game.contradictionFlag != flag) game.setAids(settings.autoCross, settings.contradictionFlag)
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize().systemBarsPadding()) {
+    BoxWithConstraints(Modifier.fillMaxSize().systemBarsPadding().onGloballyPositioned { ui.playRoot = it.boundsInRoot().topLeft }) {
         val screenW = constraints.maxWidth.toFloat()
         Column(Modifier.fillMaxSize()) {
             // bar 1: back · tier/size chip · (zoom) · (check) · what-if · pause · settings

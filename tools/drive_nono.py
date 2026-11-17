@@ -71,10 +71,12 @@ def solution():
 
 
 def saved():
-    gid, w, h, bits = solution()
-    text = adb("shell", "run-as", PKG, "cat", f"files/nonograms/{gid}.json")
-    o = json.loads(text)
-    return o, w, h, bits
+    """The game in progress as saved (the autosave lags a stroke by ~250 ms), with its solution bits."""
+    gid = adb("shell", "run-as", PKG, "cat", "files/nonograms/current.txt").strip()
+    if not gid:
+        gid = solution()[0]
+    o = json.loads(adb("shell", "run-as", PKG, "cat", f"files/nonograms/{gid}.json"))
+    return o, o["w"], o["h"], o["bits"]
 
 
 def main():
@@ -93,7 +95,7 @@ def main():
         ms = int(a[0]) if a else 120
         axis = a[1] if len(a) > 1 else "rows"
         limit = int(a[2]) if len(a) > 2 else 10 ** 9
-        _, w, h, bits = solution()
+        _, w, h, bits = saved()
         n = 0
         lines = range(h) if axis == "rows" else range(w)
         for L in lines:

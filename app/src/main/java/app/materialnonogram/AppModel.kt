@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -38,7 +39,8 @@ enum class Screen { HOME, PLAY, RESULTS, STATS, SETTINGS }
 /** The app's one model: settings, the game in progress, finished games, and where we are. */
 class AppModel(app: Application) : AndroidViewModel(app) {
     val settingsStore = SettingsStore(app)
-    val settings: StateFlow<Settings> = settingsStore.flow.stateIn(viewModelScope, SharingStarted.Eagerly, runBlocking { Settings() })
+    /** Read once, blocking, before the first frame: Home's last picks and the theme must not swap in a frame later. */
+    val settings: StateFlow<Settings> = settingsStore.flow.stateIn(viewModelScope, SharingStarted.Eagerly, runBlocking { settingsStore.flow.first() })
     private val store = NonoStore(app)
     private val saveLock = Mutex()
     /** Puzzles ready before Start is pressed; every offered Master is pre-generated on a background lane. */
