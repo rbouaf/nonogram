@@ -103,6 +103,7 @@ import app.materialnonogram.ui.kit.drawShape
 import app.materialnonogram.ui.kit.ts
 import app.materialnonogram.ui.play.GridGeo
 import app.materialnonogram.ui.play.TIER_NAMES
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import kotlinx.coroutines.delay
 
 /**
@@ -234,8 +235,10 @@ private fun Won(g: Game, r: Report, prior: List<Game>, hideTrophy: Boolean, onTr
         }
     }
     Accolades(accolades(r, prior))
-    StatTiles(g, r)
-    Timeline(g, r, sameKey.minByOrNull { it.elapsed }?.let { Report(it, null) })
+    // Tapping Hardest step walks the timeline's replay to that stroke.
+    var jump by remember(g) { mutableStateOf<Pair<Int, Int>?>(null) }
+    StatTiles(g, r) { idx -> jump = idx to ((jump?.second ?: 0) + 1) }
+    Timeline(g, r, sameKey.minByOrNull { it.elapsed }?.let { Report(it, null) }, jump?.first, jump?.second ?: 0)
 }
 
 @Composable
@@ -320,11 +323,11 @@ private fun badgeIcon(k: String) = when (k) {
     "flawless" -> "shield"; "sawahead" -> "visibility"; "sudden" -> "favorite"; else -> "shield"
 }
 
-private fun lineName(g: Game, line: Int, cap: Boolean = false) =
-    (if (line < g.h) "row ${line + 1}" else "column ${line - g.h + 1}").let { if (cap) it.replaceFirstChar { c -> c.uppercase() } else it }
+private fun lineName(g: Game, line: Int, cap: Boolean = false, short: Boolean = false) =
+    (if (line < g.h) "row ${line + 1}" else (if (short) "col " else "column ") + "${line - g.h + 1}").let { if (cap) it.replaceFirstChar { c -> c.uppercase() } else it }
 
 @Composable
-private fun StatTiles(g: Game, r: Report) {
+private fun StatTiles(g: Game, r: Report, onHardest: (Int) -> Unit = {}) {
     val player = r.playerMarks
     Row(Modifier.padding(start = 14.dp, end = 14.dp, top = 14.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         StatTile("Accuracy", "${(r.accuracy * 100).toInt()}%", "${player.count { it.correct }} of ${player.size + r.strikes.count { it.refused }}", Modifier.weight(1f))
@@ -338,7 +341,8 @@ private fun StatTiles(g: Game, r: Report) {
                 else -> "r${h.cell / g.w + 1}c${h.cell % g.w + 1}"
             }
             val sub = if (h == null || rung == null) "" else (if (rung.isLine) "line logic" else "look-ahead") + " · effort " + "%.1f".format(h.effort10 / 10.0)
-            StatTile("Hardest step", big, sub, Modifier.weight(1.15f), word = true)
+            val idx = if (h == null) -1 else r.strokes.indexOfFirst { it.id == h.stroke }
+            StatTile("Hardest step", big, sub, Modifier.weight(1.15f), word = true, onClick = if (idx >= 0) ({ onHardest(idx) }) else null)
         } else {
             StatTile("Per cell", "%.1fs".format(r.secondsPerCell), "${r.cells} cells", Modifier.weight(1f))
             StatTile("Strokes", "${r.strokeCount}", "longest ${r.longestStroke}", Modifier.weight(1.15f))
@@ -349,9 +353,17 @@ private fun StatTiles(g: Game, r: Report) {
 }
 
 @Composable
-private fun StatTile(label: String, value: String, sub: String, modifier: Modifier, word: Boolean = false) {
+private fun StatTile(label: String, value: String, sub: String, modifier: Modifier, word: Boolean = false, onClick: (() -> Unit)? = null) {
     val cs = MaterialTheme.colorScheme
-    Surface(color = cs.surfaceContainer, shape = RoundedCornerShape(18.dp), modifier = modifier.height(100.dp)) {
+    val buzz = LocalBuzz.current
+    val m = modifier.height(100.dp)
+    if (onClick != null) Surface(onClick = { buzz.toggle(); onClick() }, color = cs.surfaceContainer, shape = RoundedCornerShape(18.dp), modifier = m.semantics { contentDescription = "$label: $value. Show it in the timeline" }) {
+        Column(Modifier.padding(start = 11.dp, end = 8.dp, top = 10.dp, bottom = 9.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(label, style = ts(12f, 600, cs.onSurfaceVariant), maxLines = 1)
+            Text(value, style = if (word) ts(18f, 600, cs.onSurface, wdth = 88, lineHeight = 22f) else ts(26f, 480, cs.onSurface, wdth = 88, tnum = true), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(sub, style = ts(11.5f, 520, cs.onSurfaceVariant, tnum = true, lineHeight = 14f), maxLines = 2)
+        }
+    } else Surface(color = cs.surfaceContainer, shape = RoundedCornerShape(18.dp), modifier = m) {
         Column(Modifier.padding(start = 11.dp, end = 8.dp, top = 10.dp, bottom = 9.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(label, style = ts(12f, 600, cs.onSurfaceVariant), maxLines = 1)
             Text(value, style = if (word) ts(18f, 600, cs.onSurface, wdth = 88, lineHeight = 22f) else ts(26f, 480, cs.onSurface, wdth = 88, tnum = true), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -369,20 +381,36 @@ private fun StatTile(label: String, value: String, sub: String, modifier: Modifi
  * along it to scrub the replay, stroke by stroke.
  */
 @Composable
-private fun Timeline(g: Game, r: Report, best: Report?) {
+private fun Timeline(g: Game, r: Report, best: Report?, jumpTo: Int? = null, jumpSeq: Int = 0) {
     val cs = MaterialTheme.colorScheme
     val buzz = LocalBuzz.current
     val strokes = r.strokes
     if (strokes.isEmpty()) return
     // Opens on the longest sweep: the nonogram moment worth replaying.
     var k by remember(r.strokes.size) { mutableIntStateOf(strokes.indices.maxBy { strokes[it].cells.size }) }
+    // A jump (Hardest step): bring the timeline into view, then step the replay there one stroke at a
+    // time, quickly, so it reads as scrubbing rather than a cut. The whole walk takes about 0.7 s.
+    val inView = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+    LaunchedEffect(jumpSeq) {
+        val to = jumpTo ?: return@LaunchedEffect
+        if (to !in strokes.indices) return@LaunchedEffect
+        inView.bringIntoView()
+        val n = kotlin.math.abs(to - k)
+        if (n == 0) return@LaunchedEffect
+        val step = (700L / n).coerceIn(14L, 60L)
+        while (k != to) {
+            k += if (to > k) 1 else -1
+            buzz.select()
+            delay(step)
+        }
+    }
     val measurer = rememberTextMeasurer()
     val axis = ts(10.5f, 560, cs.onSurfaceVariant, tnum = true)
     val end = maxOf(r.time, best?.time ?: 0L).coerceAtLeast(1L)
     val n = maxOf(g.w, g.h)
     val hints = remember(g) { g.events.filter { it.kind == Ev.HINT && it.value == 1 }.map { it.t } }
     val checks = remember(g) { g.events.filter { it.kind == Ev.CHECK }.map { it.t } }
-    Surface(color = cs.surfaceContainerLow, shape = RoundedCornerShape(28.dp), modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp).fillMaxWidth()) {
+    Surface(color = cs.surfaceContainerLow, shape = RoundedCornerShape(28.dp), modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp).fillMaxWidth().bringIntoViewRequester(inView)) {
         Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp)) {
             Row(Modifier.padding(start = 4.dp, end = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Timeline", Modifier.weight(1f), style = ts(15f, 650, cs.onSurface))
@@ -502,11 +530,12 @@ private fun Replay(g: Game, r: Report, k: Int) {
 private fun strokeWords(g: Game, s: StrokeRecord): String {
     val n = s.cells.size
     val what = when (s.value) { Mark.FILLED -> "filled"; Mark.CROSSED -> "crossed"; else -> "cleared" }
-    val where = if (s.line >= 0 && n >= 2) lineName(g, s.line, cap = true) else "r${s.cells[0] / g.w + 1}c${s.cells[0] % g.w + 1}"
+    // Short words keep this to one line, so the replay board stays as tall as the text beside it.
+    val where = if (s.line >= 0 && n >= 2) lineName(g, s.line, cap = true, short = true) else "r${s.cells[0] / g.w + 1}c${s.cells[0] % g.w + 1}"
     val base = when {
         s.source == Source.HINT -> "$where, placed by a hint"
         n == 1 -> "$where, $what"
-        else -> "$where, $n $what in one drag"
+        else -> "$where, $n $what at once"
     }
     val auto = if (s.autoCells.isNotEmpty()) " · ${s.autoCells.size} crossed for you" else ""
     return base + auto + if (s.struck) " · stopped by a mistake" else ""
@@ -519,7 +548,7 @@ private fun strokeTier(g: Game, s: StrokeRecord): Pair<String, Boolean> {
         s.source == Source.HINT -> "Hint" to false
         rung == null && s.guesses > 0 -> "A guess: nothing forced it yet" to false
         rung == null -> (if (s.value == Mark.UNKNOWN) "A clear" else "Already decided") to false
-        rung.isLine -> "Line logic: " + (if (s.line >= 0) lineName(g, s.line) + " " else "") + rung.label to true
+        rung.isLine -> "Line logic: " + (if (s.line >= 0) lineName(g, s.line, short = true) + " " else "") + rung.label to true
         rung == Rung.P1 -> "Look-ahead" to true
         else -> "Deep look-ahead" to true
     }
