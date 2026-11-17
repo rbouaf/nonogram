@@ -110,8 +110,8 @@ fun SettingsScreen(model: AppModel, s: Settings) {
             Text("Settings", Modifier.padding(start = 20.dp, top = 4.dp, bottom = 12.dp), style = ts(45f, 500, cs.onSurface))
 
             Section("Difficulties on Home")
-            Pad { Checks(TIER_NAMES, { s.tierOn(Tier.entries[it]) }, shape = { Shp.difficulty[it] }) { k -> set { it.copy(tiers = it.tiers xor (1 shl k)) } } }
-            Info("info", "Tap one to show or hide it on Home. Expert needs looking ahead; Master needs it often, and exists from 15×15 up.")
+            Pad { Checks(TIER_NAMES, { s.tierOn(Tier.entries[it]) }, shape = { Shp.difficulty[it] }, tips = DIFFICULTY_TECH) { k -> set { it.copy(tiers = it.tiers xor (1 shl k)) } } }
+            Info("info", "Tap one to show or hide it on Home. Hold one to hear what it asks of you.")
 
             Section("Sizes on Home")
             Pad { Checks(PSize.entries.map { it.label }, { s.sizeOn(PSize.entries[it]) }, grid = { PSize.entries[it] }) { k -> set { it.copy(sizes = it.sizes xor (1 shl k)) } } }
@@ -141,6 +141,8 @@ fun SettingsScreen(model: AppModel, s: Settings) {
             )
 
             Section("Help while you play")
+            BandCard(s)
+            Spacer(Modifier.height(8.dp))
             Group {
                 SwitchRow("close", "Cross off finished lines", "When a row or column matches its clue, its other cells get crosses. Counts as some help", s.autoCross) { v -> set { it.copy(autoCross = v) } }
                 Box(Modifier.graphicsLayer { alpha = if (s.flagMistakes) 0.38f else 1f }) {
@@ -336,10 +338,11 @@ private fun Segmented(labels: List<String>, sel: Int, icons: List<String>? = nul
 
 /** Multi-select tiles with a check badge, three to a row; at least one stays on (the last refuses and shakes). */
 @Composable
-private fun Checks(labels: List<String>, isOn: (Int) -> Boolean, shape: ((Int) -> RoundedPolygon)? = null, grid: ((Int) -> PSize)? = null, onToggle: (Int) -> Unit) {
+private fun Checks(labels: List<String>, isOn: (Int) -> Boolean, shape: ((Int) -> RoundedPolygon)? = null, grid: ((Int) -> PSize)? = null, tips: List<String>? = null, onToggle: (Int) -> Unit) {
     val cs = MaterialTheme.colorScheme
     val buzz = LocalBuzz.current
     val scope = rememberCoroutineScope()
+    var tip by remember { mutableStateOf(-1) }
     val shakes = remember { List(labels.size) { Animatable(0f) } }
     val rows = (labels.size + 2) / 3
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -357,12 +360,15 @@ private fun Checks(labels: List<String>, isOn: (Int) -> Boolean, shape: ((Int) -
                         .graphicsLayer { translationX = shakes[k].value }
                         .semantics { role = Role.Checkbox; stateDescription = if (on) "Shown on Home" else "Hidden" }
                         .pointerInput(on, count) {
-                            detectTapGestures(onTap = {
-                                if (on && count == 1) {
-                                    buzz.lowTick(0.8f)
-                                    scope.launch { for (x in listOf(-8f, 7f, -5f, 3f, 0f)) shakes[k].animateTo(x, tween(45, easing = LinearEasing)) }
-                                } else { buzz.toggle(); onToggle(k) }
-                            })
+                            detectTapGestures(
+                                onTap = {
+                                    if (on && count == 1) {
+                                        buzz.lowTick(0.8f)
+                                        scope.launch { for (x in listOf(-8f, 7f, -5f, 3f, 0f)) shakes[k].animateTo(x, tween(45, easing = LinearEasing)) }
+                                    } else { buzz.toggle(); onToggle(k) }
+                                },
+                                onLongPress = if (tips != null) ({ _ -> buzz.select(); tip = if (tip == k) -1 else k }) else null,
+                            )
                         },
                 ) {
                     Box {
@@ -389,6 +395,52 @@ private fun Checks(labels: List<String>, isOn: (Int) -> Boolean, shape: ((Int) -
                     }
                 }
             }
+        }
+        if (tips != null && tip >= 0) Text("${labels[tip]}: ${tips[tip]}", Modifier.padding(start = 6.dp, top = 6.dp), style = ts(12.5f, 500, cs.onSurfaceVariant, lineHeight = 17f))
+    }
+}
+
+/**
+ * Which records the current mix counts for (BUILD-PLAN §5.1), in words: the aid band (none, auto-cross,
+ * contradiction flag) is chosen here, and a hint or a check sends a run to its own assisted table.
+ */
+@Composable
+private fun BandCard(s: Settings) {
+    val cs = MaterialTheme.colorScheme
+    val b = when { s.contradictionFlag && !s.flagMistakes -> 2; s.autoCross -> 1; else -> 0 }
+    val why = when (b) {
+        2 -> "a red clue points at a contradiction you'd otherwise have to find"
+        1 -> "crossing off a finished line is done for you"
+        else -> "nothing here does any of the work for you"
+    }
+    Surface(color = cs.surfaceContainerHigh, shape = RoundedCornerShape(24.dp), modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
+        Column(Modifier.padding(14.dp)) {
+            Row(Modifier.padding(start = 4.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Sym["emoji_events"], null, Modifier.size(18.dp), tint = cs.onSurface)
+                Spacer(Modifier.width(8.dp))
+                Text("Which records this counts for", style = ts(14f, 600, cs.onSurface))
+            }
+            Row(Modifier.semantics { contentDescription = "Records: ${app.materialnonogram.game.BAND_NAMES[b]}" }, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                val shapes = listOf(MaterialShapes.Square, MaterialShapes.Cookie4Sided, MaterialShapes.Cookie7Sided)
+                for (k in 0..2) {
+                    val on = k == b
+                    Surface(
+                        color = if (on) cs.secondary else cs.surfaceContainerHighest, contentColor = if (on) cs.onSecondary else cs.onSurfaceVariant,
+                        shape = RoundedCornerShape(if (on || k == 0) 22.dp else 6.dp, if (on || k == 2) 22.dp else 6.dp, if (on || k == 2) 22.dp else 6.dp, if (on || k == 0) 22.dp else 6.dp),
+                        modifier = Modifier.weight(if (k == 2) 1.3f else 1f).height(44.dp),
+                    ) {
+                        Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                            ShapeGlyph(shapes[k], 14.dp, if (on) cs.onSecondary else cs.onSurfaceVariant)
+                            Spacer(Modifier.width(5.dp))
+                            Text(listOf("No help", "Auto-cross", "Red clues")[k], style = ts(13f, if (on) 760 else 560, wdth = 90), maxLines = 1)
+                        }
+                    }
+                }
+            }
+            Text(
+                "${app.materialnonogram.game.BAND_NAMES[b]}, because $why. Best times are kept apart for each, so a game with more help never beats one with less. A game where you use a hint or the check button goes to its own assisted records.",
+                Modifier.padding(start = 4.dp, end = 4.dp, top = 10.dp), style = ts(12.5f, 450, cs.onSurfaceVariant, lineHeight = 17f),
+            )
         }
     }
 }
@@ -436,7 +488,7 @@ private fun ExportRows(model: AppModel) {
     }
     val n = model.history.size + (if (model.current != null) 1 else 0)
     Group {
-        GroupRow { RowBody("download", "Export your games", "All $n games as a spreadsheet file (CSV)", chevron = true) { csv.launch("sudoku-games.csv") } }
-        GroupRow { RowBody("history", "Export every move", "Each move of each game with its timestamp, for your own analysis", chevron = true) { json.launch("sudoku-moves.json") } }
+        GroupRow { RowBody("download", "Export your games", "All $n games as a spreadsheet file (CSV)", chevron = true) { csv.launch("nonogram-games.csv") } }
+        GroupRow { RowBody("history", "Export every move", "Each move of each game with its timestamp, for your own analysis", chevron = true) { json.launch("nonogram-moves.json") } }
     }
 }
