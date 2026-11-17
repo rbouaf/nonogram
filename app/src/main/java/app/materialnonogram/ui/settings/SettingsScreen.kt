@@ -178,16 +178,15 @@ fun SettingsScreen(model: AppModel, s: Settings) {
 
             Label("Mark empty cells with")
             Pad {
-                val cookie = app.materialnonogram.ui.theme.cookieColor(cs, cs.surface.luminance() < 0.5f)
                 TileRow(
                     listOf(
-                        Choice("Cross", preview = { CellPreview(cookie = false, cookieColor = cookie) }),
-                        Choice("Cookie", preview = { CellPreview(cookie = true, cookieColor = cookie) }),
+                        Choice("Cross", preview = { CellPreview(cookie = false) }),
+                        Choice("Cookie", preview = { CellPreview(cookie = true) }),
                     ),
                     if (s.cookieCross) 1 else 0, height = 104.dp,
                 ) { k -> set { it.copy(cookieCross = k == 1) } }
             }
-            Info("info", "The cookie takes a colour your theme isn't using, so it never looks like a filled cell.")
+            Info("info", "With the cookie, a cell you mark empty changes shape and colour instead of getting an ×.")
 
             Label("App name on your phone")
             Pad { Segmented(listOf("Nonogram", "イラロジ"), if (s.kanjiName) 1 else 0) { k -> set { it.copy(kanjiName = k == 1) } } }
@@ -508,24 +507,24 @@ private fun ExportRows(model: AppModel) {
     }
 }
 
-/** Three board tiles — filled, marked empty, filled — as the board draws them, for the mark picker. */
+/** Three board tiles — filled, empty, marked empty — as the board draws them, for the mark picker. */
 @Composable
-private fun CellPreview(cookie: Boolean, cookieColor: Color) {
+private fun CellPreview(cookie: Boolean) {
     val cs = MaterialTheme.colorScheme
+    // The board's own tones (Board.kt Roles): the lifted well in dark themes, a mid-tone secondary for the cookie.
+    val well = if (cs.surface.luminance() < 0.5f) androidx.compose.ui.graphics.lerp(cs.surfaceContainerHighest, cs.onSurface, 0.07f) else cs.surfaceContainer
     androidx.compose.foundation.Canvas(Modifier.size(width = 112.dp, height = 34.dp)) {
         val c = size.height; val gap = 0.075f * c * 2
-        val square = app.materialnonogram.ui.kit.morphPath(app.materialnonogram.ui.kit.Morphs.of(androidx.compose.material3.MaterialShapes.Square, androidx.compose.material3.MaterialShapes.Square), 0f, androidx.compose.ui.geometry.Size(c, c))
+        fun shape(p: androidx.graphics.shapes.RoundedPolygon) = app.materialnonogram.ui.kit.morphPath(app.materialnonogram.ui.kit.Morphs.of(p, p), 0f, androidx.compose.ui.geometry.Size(c, c))
+        val square = shape(androidx.compose.material3.MaterialShapes.Square)
         val x0 = (size.width - 3 * c - 2 * gap) / 2
-        for (k in 0..2) {
-            val x = x0 + k * (c + gap)
-            translate(x, 0f) { drawPath(square, if (k == 1) cs.surfaceContainerHigh else cs.tertiary) }
-        }
-        val cx = x0 + c + gap + c / 2; val cy = c / 2
-        if (cookie) {
-            val m = 0.6f * c
-            val p = app.materialnonogram.ui.kit.morphPath(app.materialnonogram.ui.kit.Morphs.of(androidx.compose.material3.MaterialShapes.Cookie4Sided, androidx.compose.material3.MaterialShapes.Cookie4Sided), 0f, androidx.compose.ui.geometry.Size(m, m))
-            translate(cx - m / 2, cy - m / 2) { drawPath(p, cookieColor) }
-        } else {
+        translate(x0, 0f) { drawPath(square, cs.tertiary) }
+        translate(x0 + c + gap, 0f) { drawPath(square, well) }
+        val x2 = x0 + 2 * (c + gap)
+        if (cookie) translate(x2, 0f) { drawPath(shape(androidx.compose.material3.MaterialShapes.Cookie4Sided), androidx.compose.ui.graphics.lerp(cs.secondaryContainer, cs.secondary, 0.45f)) }
+        else {
+            translate(x2, 0f) { drawPath(square, well) }
+            val cx = x2 + c / 2; val cy = c / 2
             val h = 0.19f * c; val sw = 0.105f * c
             drawLine(cs.onSurfaceVariant, androidx.compose.ui.geometry.Offset(cx - h, cy - h), androidx.compose.ui.geometry.Offset(cx + h, cy + h), sw, androidx.compose.ui.graphics.StrokeCap.Round)
             drawLine(cs.onSurfaceVariant, androidx.compose.ui.geometry.Offset(cx + h, cy - h), androidx.compose.ui.geometry.Offset(cx - h, cy + h), sw, androidx.compose.ui.graphics.StrokeCap.Round)

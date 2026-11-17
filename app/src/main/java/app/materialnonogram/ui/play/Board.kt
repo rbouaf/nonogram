@@ -192,17 +192,25 @@ private class FieldGeo(
 /** Colours by role (README §3.3), resolved once per scheme. */
 private class Roles(cs: ColorScheme) {
     val dark = cs.surface.luminance() < 0.5f
-    /** The cookie mark: a hue the theme isn't using (Settings → Mark empty cells with). */
-    val cookie = app.materialnonogram.ui.theme.cookieColor(cs, dark)
-    /** A finishing line's ripple: wells toward primaryContainer, fills toward primary (Sudoku's highlight). */
-    val ripWell = cs.primaryContainer
-    val ripFill = cs.primary
+    /** A finishing line's zip capsule and its empty tiles; its filled tiles (and the win's) flash toward primary. */
+    val zip = cs.primaryContainer
+    val zipFill = cs.primary
     /**
      * Sudoku's empty-tile tone (its `tileTones`): in dark themes the stock containers sit ~1.1:1 above the
      * page, so a grid of separate tiles would melt into its gaps; a share of the text colour lifts them.
      */
     val well = if (dark) lerp(cs.surfaceContainerHighest, cs.onSurface, 0.07f) else cs.surfaceContainer
     val wellHl = lerp(well, cs.primary, 0.18f)
+    /**
+     * Cookie mode (Settings → Mark empty cells with): an empty cell's tile becomes the mark, in the theme's
+     * secondary — taken to a mid tone between secondaryContainer and secondary, because the container alone
+     * sits at the well's own tone (T30 vs ~T27 in dark, T90 vs T94 in light) and the cookies vanished.
+     * Not the fill's tertiary, not the selection's primary. An auto-cross sits a third of the way back
+     * toward the well.
+     */
+    val cookie = lerp(cs.secondaryContainer, cs.secondary, 0.45f)
+    val cookieHl = lerp(cookie, cs.primary, 0.18f)
+    val cookieAuto = lerp(cookie, well, 0.35f)
     val fill = cs.tertiary
     val fillHl = lerp(cs.tertiary, cs.primary, 0.22f)
     val provisional = cs.secondary
@@ -221,33 +229,47 @@ private class Roles(cs: ColorScheme) {
 }
 
 /**
- * A row or column finishing: a water ripple. It runs along the line from where the stroke ended and
- * spills, weaker and later, into the two rows (or columns) either side. [delay] is when each tile is
- * reached (ms, −1 = untouched) and [amp] how hard.
+ * A row or column finishing — the zip. A capsule in primaryContainer grows along the line from where
+ * the stroke ended out to both ends; the line's empty tiles take its colour and its filled ones flash
+ * toward primary, each tile springs as the zip passes it, and the clue pops when the zip reaches it.
+ * After a short hold the capsule lets go. [origin] is the along-line index the zip starts from.
  */
-private class Wave(val delay: FloatArray, val amp: FloatArray, val t: Animatable<Float, *>, val end: Float)
+private class LineFx(val line: Int, val origin: Int, val len: Int, val t: Animatable<Float, *>) {
+    /** When the zip reaches along-line index [k] (−1 is the clue's end of the line). */
+    fun reach(k: Int) = abs(k - origin) * ZIP_STEP
+    val full = maxOf(origin, len - 1 - origin) * ZIP_STEP
+    val end = maxOf(full, reach(-1)) + ZIP_HOLD + ZIP_FADE + BUMP_MS
+}
 
-private const val WAVE_STEP = 42f
-/** The ripple reaches the next row out this much later. */
-private const val WAVE_PERP = 75f
-/** Strength on the line, one line out, two lines out. */
-private val WAVE_SPILL = floatArrayOf(1f, 0.42f, 0.16f)
-private const val RING_PERIOD = 380f
-private const val RING_DECAY = 210f
-private const val RING_LEN = 760f
+/** The capsule's opacity at [t]: grows in with the zip, holds, then lets go. */
+private fun zipAlpha(z: LineFx, t: Float): Float {
+    val out = z.full + ZIP_HOLD
+    return when { t < out -> 0.9f; t < out + ZIP_FADE -> 0.9f * (1f - (t - out) / ZIP_FADE); else -> 0f }
+}
+
+private const val ZIP_STEP = 26f
+private const val ZIP_HOLD = 170f
+private const val ZIP_FADE = 300f
+private const val BUMP_MS = 340f
+
+/** A spring-like kick over [BUMP_MS]: up to 1 at ~70 ms, a small dip below 0, settled by the end. */
+private fun bump(local: Float): Float {
+    if (local <= 0f || local >= BUMP_MS) return 0f
+    val x = local / BUMP_MS
+    return sin(2f * PI.toFloat() * 0.8f * x) * kotlin.math.exp(-3f * x) / 0.53f
+}
 
 /**
- * One tile's ripple over time: a damped ring — up to 1 at a quarter period, a dip to about −0.4, a
- * small second swell — like a float on water, rather than a single pulse.
+ * The win. Empty tiles and their marks shrink away from the last cell outward; then, in a second wave
+ * from the same cell, the filled tiles grow into each other until the gaps between them are gone and
+ * the pattern is one solid picture (each tile's corners square off where it meets a neighbour), with a
+ * flash as each joins; the finished picture takes one breath before the trophy flight.
  */
-private fun ring(local: Float): Float =
-    sin(2f * PI.toFloat() * local / RING_PERIOD) * kotlin.math.exp(-(local - RING_PERIOD / 4f) / RING_DECAY)
+private class WinPlan(val clear: FloatArray, val fuse: FloatArray, val breatheAt: Float, val end: Float)
 
-/** The win: when each tile's part starts (ms from the win), and when the whole thing has finished. */
-private class WinPlan(val delay: FloatArray, val end: Float)
-
-private const val WIN_FILL_MS = 560f
-private const val WIN_CLEAR_MS = 300f
+private const val WIN_CLEAR_MS = 280f
+private const val WIN_FUSE_MS = 380f
+private const val WIN_BREATHE_MS = 560f
 
 /** MaterialShapes.Square at the cell size and the cookie at its mark size, rebuilt only when a size changes. */
 private class TileShapes {
@@ -259,8 +281,8 @@ private class TileShapes {
         if (c != tileC) { morphPath(Morphs.of(Shp.square, Shp.square), 0f, Size(c, c), tilePath); tileC = c }
         return tilePath
     }
-    /** About MaterialShapes.Square's corner, for rings drawn around a tile. */
-    fun tileRadius(c: Float) = 0.28f * c
+    /** MaterialShapes.Square's corner (CornerRounding 0.3 of a unit square), for rings and the win's fused tiles. */
+    fun tileRadius(c: Float) = 0.3f * c
     fun cookie(s: Float): Path {
         if (s != cookieS) { morphPath(Morphs.of(MaterialShapes.Cookie4Sided, MaterialShapes.Cookie4Sided), 0f, Size(s, s), cookiePath); cookieS = s }
         return cookiePath
@@ -305,7 +327,7 @@ fun Field(
     // ── Effects state ────────────────────────────────────────────────────────────────────────────
     val pops = remember(game) { mutableStateMapOf<Int, Animatable<Float, *>>() }
     val crossIn = remember(game) { mutableStateMapOf<Int, Animatable<Float, *>>() }
-    val waves = remember(game) { mutableStateListOf<Wave>() }
+    val zips = remember(game) { mutableStateListOf<LineFx>() }
     val shake = remember { Animatable(0f) }
     val lineShake = remember(game) { mutableStateMapOf<Int, Animatable<Float, *>>() }
     val blink = remember(game) { mutableStateMapOf<Int, Animatable<Float, *>>() }
@@ -316,10 +338,14 @@ fun Field(
     fun planWin(o: Int): WinPlan {
         val b = game.board
         val dist = FloatArray(W * H) { i -> hypot((i % W - o % W).toFloat(), (i / W - o / W).toFloat()) }
-        val step = minOf(40f, 820f / dist.max().coerceAtLeast(1f))
-        // Empty tiles clear first, at twice the pace, so the pattern stands alone as the wave reaches it.
-        val delay = FloatArray(W * H) { i -> if (b[i] == Mark.FILLED) dist[i] * step else dist[i] * step * 0.45f }
-        return WinPlan(delay, delay.max() + WIN_FILL_MS)
+        val far = dist.max().coerceAtLeast(1f)
+        val clearStep = minOf(16f, 340f / far)
+        val clear = FloatArray(W * H) { i -> dist[i] * clearStep }
+        val fuseAt = far * clearStep * 0.6f + 120f
+        val fuseStep = minOf(30f, 620f / far)
+        val fuse = FloatArray(W * H) { i -> if (b[i] == Mark.FILLED) fuseAt + dist[i] * fuseStep else 0f }
+        val breatheAt = fuse.max() + WIN_FUSE_MS * 0.6f
+        return WinPlan(clear, fuse, breatheAt, breatheAt + WIN_BREATHE_MS)
     }
     var winPlan by remember(game) { mutableStateOf(if (game.status == Status.WON) planWin((H / 2) * W + W / 2) else null) }
     val breathe = remember { Animatable(0f) }
@@ -348,32 +374,20 @@ fun Field(
         if (springs.reduced) return
         val a = Animatable(0f)
         crossIn[cell] = a
-        scope.launch { a.animateTo(1f, tween(150)); if (crossIn[cell] === a) crossIn.remove(cell) }
+        scope.launch { a.animateTo(1f, tween(if (cookie) 300 else 150)); if (crossIn[cell] === a) crossIn.remove(cell) }
     }
     fun lineWave(lines: List<Int>, origin: Int): Int {
         if (springs.reduced || lines.isEmpty()) return 1
-        val delay = FloatArray(W * H) { -1f }
-        val amp = FloatArray(W * H)
-        val or = origin / W; val oc = origin % W
         var steps = 1
         for (l in lines) {
             val row = l < H
             val len = if (row) W else H
-            for (j in 0 until W * H) {
-                val r = j / W; val c = j % W
-                val perp = if (row) abs(r - l) else abs(c - (l - H))
-                if (perp >= WAVE_SPILL.size) continue
-                val along = if (row) abs(c - oc) else abs(r - or)
-                val d = along * WAVE_STEP + perp * WAVE_PERP
-                val a = WAVE_SPILL[perp]
-                if (a > amp[j] || (a == amp[j] && d < delay[j])) { amp[j] = a; delay[j] = d }
-            }
-            steps = maxOf(steps, len)
+            val o = if (row) origin % W else origin / W
+            val z = LineFx(l, o, len, Animatable(0f))
+            zips += z
+            scope.launch { z.t.animateTo(z.end, tween(z.end.toInt(), easing = LinearEasing)); zips.remove(z) }
+            steps = maxOf(steps, maxOf(o, len - 1 - o) + 1)
         }
-        val end = delay.max() + RING_LEN
-        val wv = Wave(delay, amp, Animatable(0f), end)
-        waves += wv
-        scope.launch { wv.t.animateTo(end, tween(end.toInt(), easing = LinearEasing)); waves.remove(wv) }
         return steps
     }
 
@@ -400,7 +414,7 @@ fun Field(
                 is Fx.AutoCrossed -> fx.cells.forEach { drawIn(it) }
                 is Fx.LinesDone -> {
                     val steps = lineWave(fx.lines, fx.cell)
-                    buzz.unitDone(fx.lines.size, steps.coerceIn(3, 12), WAVE_STEP.toInt())
+                    buzz.unitDone(fx.lines.size, steps.coerceIn(3, 12), ZIP_STEP.toInt())
                 }
                 is Fx.Mistake -> {
                     buzz.mistake()
@@ -445,9 +459,7 @@ fun Field(
                 }
                 is Fx.Won -> {
                     buzz.won()
-                    // The finish: empty tiles and their marks shrink away from the last cell out, then a wave
-                    // runs through the pattern — each filled tile swells into a Flower, turns a quarter and
-                    // settles back to a square — and the pattern is left on its own for the trophy flight.
+                    // The finish (WinPlan): the empty tiles clear, the filled ones fuse into one picture, it breathes.
                     val plan = planWin(fx.cell.coerceIn(0, W * H - 1))
                     winPlan = plan
                     if (springs.reduced) winT.snapTo(1e6f)
@@ -539,16 +551,21 @@ fun Field(
             val hintCell = if (hv != null && hv.stage >= 2) hv.hint.cell else -1
             val dealT = deal.value
             val dealOn = revealKind == 0 && dealT < 1e5f
-            // Signed: crests are positive, the dip after each one negative. Overlapping waves keep the stronger.
-            val rip = if (waves.isEmpty()) null else FloatArray(W * H).also { r ->
-                for (wv in waves) {
-                    val t = wv.t.value
-                    for (i in r.indices) {
-                        val dl = wv.delay[i]; if (dl < 0f) continue
-                        val local = t - dl
-                        if (local in 0f..RING_LEN) { val v = wv.amp[i] * ring(local); if (abs(v) > abs(r[i])) r[i] = v }
-                    }
+            // The zips, read once per frame: per-tile glow (the capsule's colour on the line) and kick, per-line clue kick.
+            val zipNow = zips.toList()
+            val glow = if (zipNow.isEmpty()) null else FloatArray(W * H)
+            val kick = if (zipNow.isEmpty()) null else FloatArray(W * H)
+            val clueKick = FloatArray(W + H)
+            for (z in zipNow) {
+                val t = z.t.value
+                val a = zipAlpha(z, t)
+                val row = z.line < H
+                for (k in 0 until z.len) {
+                    val i = if (row) z.line * W + k else k * W + (z.line - H)
+                    if (t >= z.reach(k)) glow!![i] = maxOf(glow[i], a)
+                    val v = bump(t - z.reach(k)); if (abs(v) > abs(kick!![i])) kick[i] = v
                 }
+                val v = bump(t - z.reach(-1)); if (abs(v) > abs(clueKick[z.line])) clueKick[z.line] = v
             }
             // Each effect map is read once per frame into a plain array: snapshot-map reads per cell add up.
             val shakeL = FloatArray(W + H).also { a -> for ((l, v) in lineShake) a[l] = v.value }
@@ -565,20 +582,13 @@ fun Field(
             }
             val rows = g.firstRow()..g.lastRow()
             val cols = g.firstCol()..g.lastCol()
-            /** An empty-cell mark at full size about (cx, cy): Symbols' × as two round-capped strokes, or the cookie. */
+            /** The × mark at full size about (cx, cy): two round-capped strokes. (Cookie mode reshapes the tile instead.) */
             fun DrawScope.mark(i: Int, cx: Float, cy: Float, c: Float, a0: Float) {
                 val a = auto[i]
                 val p = inC?.get(i) ?: 1f
                 // An auto-cross is quieter: smaller, and the × in outline grey.
                 val k = (if (a) 0.72f else 1f) * (0.55f + 0.45f * p)
                 val provisional = prov?.get(i) == true
-                if (cookie) {
-                    val s = 0.6f * c
-                    val col = if (provisional) roles.provisional else roles.cookie
-                    val cc = col.copy(alpha = col.alpha * a0 * p.coerceIn(0f, 1f) * (if (a) 0.7f else 1f))
-                    scale(k, k, Offset(cx, cy)) { translate(cx - s / 2, cy - s / 2) { drawPath(shapes.cookie(s), cc) } }
-                    return
-                }
                 val half = 0.19f * c * k
                 val sw = (if (a) 0.09f else 0.105f) * c
                 val col = when { provisional -> roles.provisional; a -> roles.autoCross; else -> roles.cross }
@@ -607,12 +617,18 @@ fun Field(
                     var x = g.gridLeft - Blocks.PAD_R * one + sh
                     val baseline = top + c / 2 + Blocks.FIG_H * L.fsR * one / 2
                     val p = font.paint(L.fsR, Blocks.ROW_WDTH, grad)
-                    p.color = color.copy(alpha = color.alpha * bandA).toArgb()
-                    for (k in clue.indices.reversed()) {
-                        val t = font.text(clue[k])
-                        x -= p.measureText(t)
-                        drawContext.canvas.nativeCanvas.drawText(t, x, baseline, p)
-                        x -= L.rowGap * one
+                    // The zip reaching the clue: it kicks outward from the grid and flashes primary.
+                    val ck = clueKick[y]
+                    val kc = if (ck > 0f) lerp(color, roles.zipFill, ck.coerceAtMost(1f)) else color
+                    p.color = kc.copy(alpha = kc.alpha * bandA).toArgb()
+                    val ks = 1f + 0.22f * ck
+                    scale(ks, ks, Offset(x, top + c / 2)) {
+                        for (k in clue.indices.reversed()) {
+                            val t = font.text(clue[k])
+                            x -= p.measureText(t)
+                            drawContext.canvas.nativeCanvas.drawText(t, x, baseline, p)
+                            x -= L.rowGap * one
+                        }
                     }
                 }
             }
@@ -637,14 +653,19 @@ fun Field(
                     val fs = L.fsC
                     val figH = Blocks.FIG_H * fs * one
                     val pitch = L.colPitch * one
-                    val argb = color.copy(alpha = color.alpha * bandA).toArgb()
-                    for (k in clue.indices) {
-                        val n = clue[clue.size - 1 - k]
-                        val p = font.paint(fs, if (n >= 10) L.wdth2 else L.wdth1, grad)
-                        p.color = argb
-                        val t = font.text(n)
-                        val baseline = g.gridTop - Blocks.COL_PAD_B * one - k * pitch - (pitch - figH) / 2 + sh
-                        drawContext.canvas.nativeCanvas.drawText(t, cx - p.measureText(t) / 2f, baseline, p)
+                    val ck = clueKick[line]
+                    val kc = if (ck > 0f) lerp(color, roles.zipFill, ck.coerceAtMost(1f)) else color
+                    val argb = kc.copy(alpha = kc.alpha * bandA).toArgb()
+                    val ks = 1f + 0.22f * ck
+                    scale(ks, ks, Offset(cx, g.gridTop - Blocks.COL_PAD_B * one)) {
+                        for (k in clue.indices) {
+                            val n = clue[clue.size - 1 - k]
+                            val p = font.paint(fs, if (n >= 10) L.wdth2 else L.wdth1, grad)
+                            p.color = argb
+                            val t = font.text(n)
+                            val baseline = g.gridTop - Blocks.COL_PAD_B * one - k * pitch - (pitch - figH) / 2 + sh
+                            drawContext.canvas.nativeCanvas.drawText(t, cx - p.measureText(t) / 2f, baseline, p)
+                        }
                     }
                 }
             }
@@ -661,6 +682,22 @@ fun Field(
                 val tile = shapes.tile(c)
                 val tileR = shapes.tileRadius(c)
                 val crossA = alpha
+                // The zips' capsules, under the tiles: only their 3 dp rim and the gaps show around the line.
+                for (z in zipNow) {
+                    val t = z.t.value
+                    val a = zipAlpha(z, t); if (a <= 0f) continue
+                    val r = t / ZIP_STEP
+                    val lo = (z.origin - r).coerceAtLeast(0f); val hi = (z.origin + r).coerceAtMost(z.len - 1f)
+                    fun at(f: Float): Float { val k = f.toInt().coerceIn(0, z.len - 1); val k1 = (k + 1).coerceAtMost(z.len - 1); val fr = f - k; return if (z.line < H) g.x(k) + fr * (g.x(k1) - g.x(k)) else g.y(k) + fr * (g.y(k1) - g.y(k)) }
+                    val o = 3f * one * a
+                    val (l, tp, rr, bt) = if (z.line < H) listOf(at(lo) - o, g.y(z.line) - o, at(hi) + c + o, g.y(z.line) + c + o)
+                        else listOf(g.x(z.line - H) - o, at(lo) - o, g.x(z.line - H) + c + o, at(hi) + c + o)
+                    drawRoundRect(roles.zip.copy(alpha = a * alpha), Offset(l, tp), Size(rr - l, bt - tp), CornerRadius(c / 2 + o))
+                }
+                // The win's last beat: the whole picture breathes once.
+                val gs = if (plan != null) 1f + 0.035f * bump((wt - plan.breatheAt) * BUMP_MS / WIN_BREATHE_MS) else 1f
+                val gc = Offset(g.x(0) + (g.x(W - 1) + c - g.x(0)) / 2, g.y(0) + (g.y(H - 1) + c - g.y(0)) / 2)
+                scale(gs, gs, gc) {
                 for (y in rows) for (x in cols) {
                     val i = y * W + x
                     val ds = dealScale(i); if (ds <= 0.001f) continue
@@ -669,18 +706,18 @@ fun Field(
                     val hl = playing && (y == selR || x == selC)
                     val isFill = !paused && b[i] == Mark.FILLED
                     val isProv = prov?.get(i) == true
-                    // The finish (see Fx.Won): empty tiles shrink away; filled ones bloom and turn.
-                    var winS = 1f; var winM = 0f; var winRot = 0f
+                    // The finish (see WinPlan): empty tiles shrink away; filled ones grow into each other.
+                    var winS = 1f; var fuse = 0f; var fuseKick = 0f
                     if (plan != null) {
-                        val local = wt - plan.delay[i]
                         if (!isFill) {
-                            val e = (local / WIN_CLEAR_MS).coerceIn(0f, 1f)
+                            val e = ((wt - plan.clear[i]) / WIN_CLEAR_MS).coerceIn(0f, 1f)
                             if (e >= 1f) continue
                             winS = 1f - e * e * (3f - 2f * e)
                         } else {
-                            val p = (local / WIN_FILL_MS).coerceIn(0f, 1f)
-                            winM = sin(PI.toFloat() * p)
-                            winRot = 90f * p * p * (3f - 2f * p)
+                            val local = wt - plan.fuse[i]
+                            val q = (local / WIN_FUSE_MS).coerceIn(0f, 1f)
+                            fuse = 1f - (1f - q) * (1f - q) * (1f - q)
+                            fuseKick = bump(local)
                         }
                     }
                     var col = when {
@@ -689,37 +726,49 @@ fun Field(
                         hl -> roles.wellHl
                         else -> roles.well
                     }
+                    val crossed = !paused && b[i] == Mark.CROSSED
+                    // Cookie mode: the empty tile itself turns into the mark — Square morphs to Cookie4Sided
+                    // (with a little overshoot) as its colour moves from the well's to the cookie's.
+                    val cookieCell = cookie && crossed
+                    val cookieP = if (cookieCell) (inC?.get(i) ?: 1f).coerceIn(0f, 1f) else 0f
+                    if (cookieCell) {
+                        val cc = when { isProv -> roles.provisional; auto[i] -> roles.cookieAuto; hl -> roles.cookieHl; else -> roles.cookie }
+                        col = lerp(col, cc, cookieP)
+                    }
                     if (!isFill) {
                         if (hintLine >= 0 && (if (hintLine < H) y == hintLine else x == hintLine - H)) col = lerp(col, roles.hintWash, brV * 0.9f)
                         if (hintCell == i) col = lerp(col, roles.hintWash, brV)
                     }
-                    val rv = rip?.get(i) ?: 0f
-                    val up = rv.coerceIn(0f, 1f)
-                    if (up > 0f) col = lerp(col, if (isFill) roles.ripFill else roles.ripWell, up * 0.75f)
-                    if (winM > 0f) col = lerp(col, roles.ripFill, winM * 0.8f)
-                    // A crest lifts and rounds the tile (Square → Circle); the dip after it sinks it a little.
-                    val sc = ds * winS * (if (isFill) popC?.get(i) ?: 1f else 1f) * (1f + 0.16f * rv) * (1f + 0.28f * winM)
+                    val gl = glow?.get(i) ?: 0f
+                    val kv = kick?.get(i) ?: 0f
+                    if (gl > 0f) col = lerp(col, if (isFill) roles.zipFill else roles.zip, gl * (if (isFill) 0.55f else 0.85f))
+                    if (fuseKick > 0f) col = lerp(col, roles.zipFill, fuseKick * 0.6f)
+                    val sc = ds * winS * (if (isFill) popC?.get(i) ?: 1f else 1f) * (1f + 0.12f * kv)
                     val ca = col.copy(alpha = col.alpha * alpha * (if (plan != null && !isFill) winS else 1f))
-                    val crossed = !paused && b[i] == Mark.CROSSED
-                    val morph = when {
-                        winM > 0.01f -> Morphs.of(Shp.square, MaterialShapes.Flower)
-                        up > 0.01f -> Morphs.of(Shp.square, Shp.circle)
-                        else -> null
-                    }
-                    if (morph != null) {
-                        morphPath(morph, if (winM > 0.01f) winM else up * 0.85f, Size(c, c), shapePath)
-                        val lift = -2.5f * one * up
-                        rotate(winRot, Offset(cx, cy)) {
-                            scale(sc, sc, Offset(cx, cy + lift)) {
-                                translate(X, Y + lift) { drawPath(shapePath, ca) }
-                                if (crossed) mark(i, cx, cy + lift, c, crossA)
-                            }
-                        }
+                    if (fuse > 0f) {
+                        // Grow into filled neighbours: right and down by the gap (the neighbour does the rest), and
+                        // square off each corner that meets one.
+                        val R = x + 1 < W && b[i + 1] == Mark.FILLED; val D = y + 1 < H && b[i + W] == Mark.FILLED
+                        val Lf = x > 0 && b[i - 1] == Mark.FILLED; val U = y > 0 && b[i - W] == Mark.FILLED
+                        val ew = if (R) (g.x(x + 1) - g.x(x) - c) * fuse else 0f
+                        val eh = if (D) (g.y(y + 1) - g.y(y) - c) * fuse else 0f
+                        val tr = shapes.tileRadius(c)
+                        fun rr(a: Boolean, bb: Boolean) = CornerRadius(if (a || bb) tr * (1f - fuse) else tr)
+                        path.rewind()
+                        path.addRoundRect(RoundRect(X, Y, X + c + ew, Y + c + eh, rr(Lf, U), rr(R, U), rr(R, D), rr(Lf, D)))
+                        drawPath(path, ca)
                         continue
                     }
-                    if (sc == 1f) translate(X, Y) { drawPath(tile, ca) }
-                    else scale(sc, sc, Offset(cx, cy)) { translate(X, Y) { drawPath(tile, ca) } }
-                    if (crossed) { val ms = ds * winS; if (ms == 1f) mark(i, cx, cy, c, crossA * winS) else scale(ms, ms, Offset(cx, cy)) { mark(i, cx, cy, c, crossA * winS) } }
+                    if (cookieCell && cookieP < 1f) {
+                        morphPath(Morphs.of(Shp.square, MaterialShapes.Cookie4Sided), easeOutBack(cookieP), Size(c, c), shapePath)
+                        scale(sc, sc, Offset(cx, cy)) { translate(X, Y) { drawPath(shapePath, ca) } }
+                        continue
+                    }
+                    val restPath = if (cookieCell) shapes.cookie(c) else tile
+                    if (sc == 1f) translate(X, Y) { drawPath(restPath, ca) }
+                    else scale(sc, sc, Offset(cx, cy)) { translate(X, Y) { drawPath(restPath, ca) } }
+                    if (crossed && !cookie) { val ms = ds * winS; if (ms == 1f) mark(i, cx, cy, c, crossA * winS) else scale(ms, ms, Offset(cx, cy)) { mark(i, cx, cy, c, crossA * winS) } }
+                }
                 }
                 // The hint's cell: a breathing ring.
                 if (hintCell >= 0 && !paused) {
