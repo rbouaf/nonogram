@@ -97,6 +97,13 @@ class PlayUi {
     var holdSeq by mutableIntStateOf(0)
     /** A long-press borrowed the other tool for this stroke. */
     var borrowed by mutableStateOf(false)
+    /**
+     * Holding on an already-filled cell measures it instead of switching tools (user, 2026-11-17): the cell,
+     * and the lengths of the filled runs through it along its row and its column. −1 when not measuring.
+     */
+    var measure by mutableIntStateOf(-1)
+    var measureRow by mutableIntStateOf(0)
+    var measureCol by mutableIntStateOf(0)
     /** Zoom (cell dp) and pan (px, ≤ 0), when the puzzle zooms. */
     var zoomC by mutableFloatStateOf(Blocks.ZOOM_OPEN)
     var panX by mutableFloatStateOf(0f)
@@ -757,6 +764,20 @@ fun Field(
                     drawContext.canvas.nativeCanvas.drawPath(winOutline, winPaint)
                 }
                 }
+                // A measured cell (hold on a fill): capsules around its row run and its column run.
+                val mc = ui.measure
+                if (mc >= 0 && playing) {
+                    val r0 = mc / W; val c0 = mc % W
+                    fun filled(r: Int, cc: Int) = r in 0 until H && cc in 0 until W && b[r * W + cc] == Mark.FILLED
+                    var a = c0; while (filled(r0, a - 1)) a--
+                    var e = c0; while (filled(r0, e + 1)) e++
+                    var t = r0; while (filled(t - 1, c0)) t--
+                    var u = r0; while (filled(u + 1, c0)) u++
+                    val o = 3f * one; val rad = minOf(14f * one, c / 2 + o)
+                    val st = Stroke(2.5f * one)
+                    drawRoundRect(roles.ring.copy(alpha = alpha), Offset(g.x(a) - o, g.y(r0) - o), Size(g.x(e) + c - g.x(a) + 2 * o, c + 2 * o), CornerRadius(rad), style = st)
+                    if (u > t) drawRoundRect(roles.ring.copy(alpha = alpha), Offset(g.x(c0) - o, g.y(t) - o), Size(c + 2 * o, g.y(u) + c - g.y(t) + 2 * o), CornerRadius(rad), style = st)
+                }
                 // The hint's cell: a breathing ring.
                 if (hintCell >= 0 && !paused) {
                     val X = g.x(hintCell % W); val Y = g.y(hintCell / W)
@@ -850,6 +871,8 @@ fun Field(
                         }
                         var drawing = false
                         var startCell = -1
+                        var startWasFilled = false
+                        fun startFilled() = startWasFilled
                         val selBefore = ui.sel
                         /** The geometry as of now: auto-scroll moves the pan between frames, faster than recomposition. */
                         fun now(): FieldGeo {
@@ -877,14 +900,16 @@ fun Field(
                         }
                         if (!ui.peek && g0.view.contains(down.position)) {
                             val r = g0.rowAt(down.position.y); val c = g0.colAt(down.position.x)
+                            startWasFilled = r in 0 until H && c in 0 until W && game.board[r * W + c] == Mark.FILLED
                             if (r in 0 until H && c in 0 until W && game.beginStroke(r * W + c, game.tool, deferStart = longPress)) {
                                 drawing = true; startCell = r * W + c
                                 ui.sel = startCell; ui.finger = down.position; ui.borrowed = false
-                                if (longPress) { ui.holdAt = Offset(g0.x(c) + g0.c / 2, g0.y(r) + g0.c / 2); ui.holdSeq++ }
+                                if (longPress || startFilled()) { ui.holdAt = Offset(g0.x(c) + g0.c / 2, g0.y(r) + g0.c / 2); ui.holdSeq++ }
                                 down.consume()
                             }
                         }
-                        var longDone = !longPress || !drawing
+                        // A hold on a filled cell measures its runs, with or without "hold for the other tool".
+                        var longDone = !drawing || (!longPress && !startFilled())
                         var transforming = false
                         val deadline = down.uptimeMillis + longMs
                         var last = down.uptimeMillis
@@ -924,7 +949,19 @@ fun Field(
                             if (ev == null) {
                                 if (waitLong) {
                                     longDone = true
-                                    if (game.switchStrokeTool()) ui.borrowed = true
+                                    if (startFilled()) {
+                                        // Measure: the stroke is dropped (nothing changes) and the runs show until lift.
+                                        game.cancelStroke(); drawing = false
+                                        val r0 = startCell / W; val c0 = startCell % W
+                                        fun filled(r: Int, c: Int) = r in 0 until H && c in 0 until W && game.board[r * W + c] == Mark.FILLED
+                                        var a = c0; while (filled(r0, a - 1)) a--
+                                        var bb = c0; while (filled(r0, bb + 1)) bb++
+                                        var t = r0; while (filled(t - 1, c0)) t--
+                                        var u = r0; while (filled(u + 1, c0)) u++
+                                        ui.measureRow = bb - a + 1; ui.measureCol = u - t + 1
+                                        ui.measure = startCell
+                                        buzz.highlight()
+                                    } else if (game.switchStrokeTool()) ui.borrowed = true
                                     ui.holdAt = null
                                 } else if (scrolling) {
                                     val t = SystemClock.uptimeMillis()
@@ -966,10 +1003,10 @@ fun Field(
                                 fingerAt = ch.position
                                 ch.consume()
                                 if (game.stroke == null) drawing = false
-                            }
+                            } else if (ui.measure >= 0) { ui.finger = ch.position; ch.consume() }
                         }
                         if (drawing) game.endStroke()
-                        ui.finger = null; ui.holdAt = null; ui.borrowed = false
+                        ui.finger = null; ui.holdAt = null; ui.borrowed = false; ui.measure = -1
                         if (ui.peekByPinch) { ui.peekByPinch = false; ui.peek = false }
                     }
                 }

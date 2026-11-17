@@ -283,6 +283,12 @@ private fun Overlays(game: Game, ui: PlayUi, screenW: Float) {
             )
         }
     }
+    // Holding on a filled cell: how long the filled runs through it are, along the row and down the column.
+    if (ui.measure >= 0 && finger != null && game.status == Status.PLAYING) {
+        val r = ui.measureRow; val c = ui.measureCol
+        val text = when { c <= 1 -> "$r"; r <= 1 -> "$c"; else -> "$r ↔  $c ↕" }
+        Bubble(at = ui.fieldAt + finger, column = false, screenW = screenW, d = d, tool = Tool.FILL, text = text, word = c > 1 && r > 1)
+    }
     if (ui.peek) {
         Box(Modifier.fillMaxWidth().offset { IntOffset(0, (ui.fieldAt.y + 12 * d).roundToInt()) }, contentAlignment = Alignment.TopCenter) {
             Surface(color = cs.inverseSurface, contentColor = cs.inverseOnSurface, shape = RoundedCornerShape(18.dp)) {
