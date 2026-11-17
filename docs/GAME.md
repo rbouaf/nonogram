@@ -330,3 +330,18 @@ layer.
   the `Size` back where there is one.
 - **Undo history is not persisted** (as in Sudoku), even though the log could rebuild it.
 - **Hints are not available inside a what-if layer.**
+
+## Phase 5 additions
+
+| File | What |
+|---|---|
+| `game/OpenCode.kt` | Home's "Open a code": `extract` finds the code in a whole share message or a Pattern line; `open` refuses in plain words (not a code, part missing, too long, one character off, random seed, givens, no solution, needs guessing, too big for now) or returns a `Deal` with where it came from and whether it was turned tall. `shareText` is what Share sends. Boards above 20×20 are refused from the code's header, before any grading. |
+| `game/Stats.kt` | `GameSummary` (the few numbers Stats needs from a `Report`, keyed by `id + effort version + grader version + rated`), `bestsMatrix`, `historyPoints` (ms for one size, seconds per cell for all), `trailingGeoMean`, `runningBest`, `lookAhead` (found yourself vs by hint, median time to find one, recent against before; unrated games count as pending, never as zero), `totals`, `streaks`. |
+| `Report.Strike.line` | For a slip, the row or column whose own logic rules the mark out, so Results can quote its clue. |
+
+`AppModel.summarise(games)` fills `summaries` in the background: every game unrated first (a log replay),
+then Expert and Master rated for look-ahead. Results build their own rated report with `buildReport`.
+
+`app/src/test/.../tools/DemoHistory.kt` is not a test: with `NONO_DEMO_OUT` set it writes ~70 real games
+(real puzzles, played through the real `Game` API by a simulated player) for Stats screenshots;
+`tools/push_demo_history.sh` copies them into the debug build.

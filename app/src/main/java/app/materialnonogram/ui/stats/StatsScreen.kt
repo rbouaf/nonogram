@@ -357,7 +357,8 @@ private fun MatrixTile(cell: BestCell?, offered: Boolean, lit: Boolean, recent: 
             // Stronger tertiary = more solves: one solve is a faint wash, a dozen or more is full tertiary.
             val f = ((cell.count - 1) / 11f).coerceIn(0f, 1f)
             val bg = lerp(cs.surfaceContainerHighest, cs.tertiary, 0.22f + 0.78f * f).let { if (lit) it else lerp(it, cs.surfaceContainer, 0.6f) }
-            val fg = if (bg.luminance() > 0.45f) Color(0xFF1B1B1F) else Color(0xFFF4F0F4)
+            // Whichever ink contrasts more: the two contrast ratios cross at a luminance of about 0.18.
+            val fg = if (bg.luminance() > 0.18f) Color(0xFF1B1B1F) else Color(0xFFF4F0F4)
             val (mm, _) = clockMs(cell.best.elapsed)
             Surface(
                 onClick = onClick, color = bg, contentColor = fg, shape = RoundedCornerShape(10.dp),

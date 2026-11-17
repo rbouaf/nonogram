@@ -184,7 +184,8 @@ private fun TrophyFlight(g: Game, from: GridGeo, to: Rect, p: Float) {
     var origin by remember { mutableStateOf(Offset.Zero) }
     Canvas(Modifier.fillMaxSize().onGloballyPositioned { origin = it.boundsInRoot().topLeft }) {
         val d = density
-        val col = lerp(cs.tertiary, cs.onPrimaryContainer, p.coerceIn(0f, 1f))
+        // Board ink for the first half of the flight, hero ink by the landing: a straight lerp of the two goes grey midway.
+        val col = lerp(cs.tertiary, cs.onPrimaryContainer, ((p - 0.45f) / 0.45f).coerceIn(0f, 1f))
         for (i in 0 until g.cells) {
             if (!g.deal.puzzle.filled(i)) continue
             val a = from.tile(i)

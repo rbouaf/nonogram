@@ -65,6 +65,9 @@ class MainActivity : ComponentActivity() {
                             transitionSpec = {
                                 if (targetState == Screen.PLAY && model.intro != null) {
                                     androidx.compose.animation.EnterTransition.None.togetherWith(androidx.compose.animation.ExitTransition.None)
+                                } else if (targetState == Screen.RESULTS && initialState == Screen.PLAY) {
+                                    // The solved board flies into the hero (ResultsScreen): a quick cross-fade, no dip to black.
+                                    fadeIn(tween(140)).togetherWith(fadeOut(tween(140)))
                                 } else {
                                     (fadeIn(tween(220, 60)) + scaleIn(initialScale = 0.96f, animationSpec = tween(320)))
                                         .togetherWith(fadeOut(tween(120)) + scaleOut(targetScale = 1.02f, animationSpec = tween(200)))

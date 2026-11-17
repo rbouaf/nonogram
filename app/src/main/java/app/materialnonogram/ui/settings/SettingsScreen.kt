@@ -375,7 +375,7 @@ private fun Checks(labels: List<String>, isOn: (Int) -> Boolean, shape: ((Int) -
                         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             val ink = if (on) cs.onSecondaryContainer else cs.onSurfaceVariant
                             if (shape != null) ShapeGlyph(shape(k), 30.dp, ink)
-                            if (grid != null) {
+                            if (grid != null) Box(Modifier.height(30.dp), contentAlignment = Alignment.BottomCenter) {
                                 val g = grid(k)
                                 Canvas(Modifier.size((g.w * 1.5f).dp, (g.h * 1.5f).dp)) {
                                     drawRoundRect(ink, cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx()), style = Stroke(1.3.dp.toPx()))
