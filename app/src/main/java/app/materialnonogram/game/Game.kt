@@ -290,6 +290,7 @@ class Game(
                 s.ext = k * dir
                 val cell = offCell(s, k * dir)
                 if (cur[cell] != s.from) continue // the start-cell rule: other states are passed over
+                if (lineClosed(cell, s.to)) continue // a finished line takes no more fills
                 if (!apply(s, cell, k * dir)) { showStroke(); return }
                 emit(Fx.Marked(cell, s.to, s.count))
             }
@@ -317,9 +318,25 @@ class Game(
         return true
     }
 
+    /**
+     * A fill never lands on a cell whose row or column already matches its clue: the instant a line is
+     * complete its cells stop taking fills, so a swipe that finishes a row and carries on past its end
+     * just stops there instead of costing a life (user, 2026-11-17). Matching a clue is on the board for
+     * anyone to see, so this gives nothing away. Crosses and clearing are never blocked. Flag mode only
+     * ([marksFinal]): there a complete line is a correct one; with mistakes unflagged a line can match its
+     * clue with wrong cells, and blocking fills around it would get in the way of fixing them.
+     */
+    private fun lineClosed(cell: Int, to: Byte): Boolean {
+        if (to != FILLED || !marksFinal) return false
+        val r = cell / w; val c = cell % w
+        return LineCheck.isSatisfied(clues.line(r), Lines.read(w, h, cur, r)) ||
+            LineCheck.isSatisfied(clues.line(h + c), Lines.read(w, h, cur, h + c))
+    }
+
     private fun applyStart(s: StrokeState) {
         s.pending = false
         if (s.startApplied) return
+        if (lineClosed(s.start, s.to)) { s.startApplied = true; return }
         if (isWrong(s.start, s.to)) { s.stopped = true; finalize(s); refuse(s.start, s.to, s.id); return }
         cur[s.start] = s.to; curAuto[s.start] = false
         s.applied += Entry(s.start, 0, s.t0)

@@ -248,17 +248,31 @@ class GameTest {
 
     @Test fun flagModeStopsAStrokeAtItsFirstWrongCellForOneLife() {
         val g = game5(flag = true)
-        g.beginStroke(c5(0, 0), Tool.FILL)
-        g.extendStroke(c5(0, 4))                       // r0 = ###..: c3 is wrong
+        g.beginStroke(c5(1, 0), Tool.FILL)
+        g.extendStroke(c5(1, 4))                       // r1 = #.#.#: c1 is wrong
         assertTrue(g.stroke!!.stopped)
-        g.extendStroke(c5(0, 1)); g.extendStroke(c5(0, 4))  // ignored once stopped
+        g.extendStroke(c5(1, 0)); g.extendStroke(c5(1, 4))  // ignored once stopped
         g.endStroke()
-        assertEquals(listOf(FILLED, FILLED, FILLED, UNKNOWN, UNKNOWN), (0..4).map { g.board[it] })
+        assertEquals(listOf(FILLED, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN), (0..4).map { g.board[c5(1, it)] })
         assertEquals(2, g.lives)
-        assertEquals(listOf(Ev.MARK, Ev.MARK, Ev.MARK, Ev.MISTAKE), g.events.map { it.kind })
+        assertEquals(listOf(Ev.MARK, Ev.MISTAKE), g.events.map { it.kind })
         assertEquals(1, g.drainFx().count { it is Fx.Mistake })
-        assertFalse(g.canUndo)                          // flag mode: the three fills are judged and final
+        assertFalse(g.canUndo)                          // flag mode: the fill is judged and final
         assertTrue(Report(g).strokes.single().struck)
+    }
+
+    @Test fun flagModeASwipeThatFinishesItsRowStopsThereForFree() {
+        val g = game5(flag = true)
+        g.beginStroke(c5(0, 0), Tool.FILL)
+        g.extendStroke(c5(0, 4))                       // r0 = ###..: complete at c2, then c3 and c4 are passed over
+        g.endStroke()
+        assertEquals(listOf(FILLED, FILLED, FILLED, UNKNOWN, UNKNOWN), (0..4).map { g.board[c5(0, it)] })
+        assertEquals(3, g.lives)
+        assertTrue(g.events.none { it.kind == Ev.MISTAKE })
+        g.tap(c5(0, 4), Tool.FILL)                     // a tap in the finished row takes no fill either
+        assertEquals(UNKNOWN, g.board[c5(0, 4)]); assertEquals(3, g.lives)
+        g.tap(c5(0, 4), Tool.CROSS)                    // crosses are still welcome
+        assertEquals(CROSSED, g.board[c5(0, 4)])
     }
 
     @Test fun pausingDropsAPendingStartInsteadOfJudgingIt() {
