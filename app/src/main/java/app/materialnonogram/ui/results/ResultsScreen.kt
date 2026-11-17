@@ -602,7 +602,7 @@ private fun strikeWords(g: Game, s: app.materialnonogram.game.Strike): String {
             "${lineName(g, s.line, cap = true)}'s $clue already rules out $mark here: a misread clue"
         } else "Its own row or column already rules out $mark here: a misread clue"
         StrikeKind.GUESS -> "Nothing on the board forced this cell either way"
-        StrikeKind.WRONG -> "It had to be $should, but only looking ahead shows it"
+        StrikeKind.WRONG -> "It had to be $should, but from this board only looking ahead shows it"
         null -> "A wrong ${if (s.value == Mark.FILLED) "fill" else "cross"}"
     }
 }
@@ -658,7 +658,7 @@ private fun ShareButton(g: Game) {
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }, shape = RoundedCornerShape(20.dp), containerColor = cs.surfaceContainerHigh) {
             DropdownMenuItem(
-                text = { Column { Text("Share code", style = ts(15f, 600)); Text(g.deal.shareCode, style = ts(12f, 500, cs.onSurfaceVariant, tnum = true)) } },
+                text = { Column { Text("Share code", style = ts(15f, 600)); Text(g.deal.shareCode, style = ts(11.5f, 500, cs.onSurfaceVariant, wdth = 78, tnum = true), maxLines = 1) } },
                 leadingIcon = { Icon(Sym["share"], null, Modifier.size(20.dp)) },
                 onClick = {
                     open = false

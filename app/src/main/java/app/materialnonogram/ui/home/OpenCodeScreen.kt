@@ -41,6 +41,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -78,6 +79,8 @@ fun OpenCodeScreen(model: AppModel) {
     var busy by remember { mutableStateOf(false) }
     var outcome by remember { mutableStateOf<OpenCode.Outcome?>(null) }
     val focus = remember { FocusRequester() }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     LaunchedEffect(Unit) { focus.requestFocus() }
 
     fun open(t: String = text) {
@@ -86,6 +89,8 @@ fun OpenCodeScreen(model: AppModel) {
         scope.launch {
             val o = model.openCode(t)
             busy = false; outcome = o
+            // The answer (and Play) sits under the keyboard: put it away.
+            keyboard?.hide(); focusManager.clearFocus()
             if (o is OpenCode.Outcome.Ok) buzz.settle() else buzz.lowTick(0.8f)
         }
     }
@@ -102,7 +107,12 @@ fun OpenCodeScreen(model: AppModel) {
                 Modifier.padding(horizontal = 6.dp), style = ts(14f, 460, cs.onSurfaceVariant, lineHeight = 20f),
             )
             OutlinedTextField(
-                value = text, onValueChange = { text = it; outcome = null },
+                value = text,
+                onValueChange = { v ->
+                    // A hardware Enter arrives as one typed "\n", not as the IME action: treat it as Open.
+                    // A pasted share message keeps its line breaks (it grew by more than one character).
+                    if (v.length == text.length + 1 && v.endsWith("\n")) { text = v.trimEnd(); open(text) } else if (v != text) { text = v; outcome = null }
+                },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp).focusRequester(focus),
                 label = { Text("Share code or Pattern ID") },
                 placeholder = { Text("1H2K5-8M3QX-… or 10x10:3/1.2/…", style = ts(16f, 450, cs.onSurfaceVariant, tnum = true)) },
@@ -129,7 +139,7 @@ fun OpenCodeScreen(model: AppModel) {
                 Surface(
                     onClick = { buzz.press(); open() }, enabled = text.isNotBlank() && !busy,
                     color = cs.primary, contentColor = cs.onPrimary, shape = RoundedCornerShape(28.dp),
-                    modifier = Modifier.weight(0.7f).height(56.dp),
+                    modifier = Modifier.weight(0.7f).height(56.dp).graphicsLayer { alpha = if (text.isNotBlank() && !busy) 1f else 0.38f },
                 ) {
                     Box(contentAlignment = Alignment.Center) { Text("Open", style = ts(16f, 650)) }
                 }
