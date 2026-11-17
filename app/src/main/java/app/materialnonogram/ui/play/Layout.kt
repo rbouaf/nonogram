@@ -14,9 +14,11 @@ import app.materialnonogram.ui.theme.flex
  * Every number here is the README's; dp throughout.
  */
 object Blocks {
-    // Grid C: 1 dp hairlines inside a 5×5 block, 4 dp gutters between blocks, no frame.
-    const val MINOR = 1f
-    const val MAJOR = 4f
+    // Sudoku's Tiles grid (user, 2026-11-17): every cell its own rounded tile, a small gap inside a 5×5
+    // block and a wider gutter between blocks, no lines. Sudoku's ratios (gap 0.075·c, gutter 0.225·c),
+    // with floors so a 15 dp cell still shows its gaps.
+    fun minor(c: Float): Float = maxOf(1.5f, 0.075f * c)
+    fun major(c: Float): Float = maxOf(4.5f, 0.225f * c)
 
     // Clue typography (§3.2).
     const val ROW_K = 0.86f
@@ -58,7 +60,7 @@ object Blocks {
     /** A fit cell under this gets zoom (20×20's 15.4 dp; 15×20's 21.2 dp does not). */
     const val ZOOM_BELOW = 18f
 
-    fun pos(k: Int, c: Float): Float = k * (c + MINOR) + (k / 5) * (MAJOR - MINOR)
+    fun pos(k: Int, c: Float): Float = k * (c + minor(c)) + (k / 5) * (major(c) - minor(c))
     fun span(n: Int, c: Float): Float = if (n <= 0) 0f else pos(n - 1, c) + c
 }
 
@@ -157,8 +159,9 @@ data class PlayLayout(
             var c = zoomC ?: 20f
             if (zoomC == null) repeat(12) {
                 val band = rowBand(clues, rowFs(c, false), font)
-                val cw = (availW - band - Blocks.span(w, 0f)) / w
-                val ch = (availH - colBand(clues, colFs(c, false, font)) - Blocks.span(h, 0f)) / h
+                // The gaps grow with the cell, so take them at the current estimate; the iteration settles it.
+                val cw = (availW - band - (Blocks.span(w, c) - w * c)) / w
+                val ch = (availH - colBand(clues, colFs(c, false, font)) - (Blocks.span(h, c) - h * c)) / h
                 c = minOf(cw, ch, Blocks.CELL_MAX).coerceAtLeast(6f)
             }
             val fsR = rowFs(c, zoom)

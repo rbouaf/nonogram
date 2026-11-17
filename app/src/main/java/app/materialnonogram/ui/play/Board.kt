@@ -68,9 +68,11 @@ import app.materialnonogram.game.Mark
 import app.materialnonogram.game.Status
 import app.materialnonogram.game.StrokeView
 import app.materialnonogram.game.Tool
+import app.materialnonogram.game.WhatIfPhase
 import app.materialnonogram.ui.kit.LocalBuzz
 import app.materialnonogram.ui.kit.LocalSprings
 import app.materialnonogram.ui.kit.Morphs
+import app.materialnonogram.ui.kit.Shp
 import app.materialnonogram.ui.kit.morphPath
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -141,10 +143,11 @@ private class FieldGeo(
     /** Column (or row) index under a field coordinate, unclamped: off the grid gives −1 or ≥ n. */
     private fun index(local: Float): Int {
         val ld = local / d
-        val block = 5 * L.c + 4 * Blocks.MINOR + Blocks.MAJOR
+        val mi = Blocks.minor(L.c)
+        val block = 5 * L.c + 4 * mi + Blocks.major(L.c)
         val b = floor(ld / block).toInt()
         val rem = ld - b * block
-        return b * 5 + (rem / (L.c + Blocks.MINOR)).toInt().coerceIn(0, 4)
+        return b * 5 + (rem / (L.c + mi)).toInt().coerceIn(0, 4)
     }
     fun colAt(x: Float) = if (x - gridLeft - panX < 0) -1 else index(x - gridLeft - panX)
     fun rowAt(y: Float) = if (y - gridTop - panY < 0) -1 else index(y - gridTop - panY)
@@ -189,11 +192,19 @@ private class FieldGeo(
 /** Colours by role (README §3.3), resolved once per scheme. */
 private class Roles(cs: ColorScheme) {
     val dark = cs.surface.luminance() < 0.5f
-    val well = cs.surfaceContainerHigh
+    /** The cookie mark: a hue the theme isn't using (Settings → Mark empty cells with). */
+    val cookie = app.materialnonogram.ui.theme.cookieColor(cs, dark)
+    /** A finishing line's ripple: wells toward primaryContainer, fills toward primary (Sudoku's highlight). */
+    val ripWell = cs.primaryContainer
+    val ripFill = cs.primary
+    /**
+     * Sudoku's empty-tile tone (its `tileTones`): in dark themes the stock containers sit ~1.1:1 above the
+     * page, so a grid of separate tiles would melt into its gaps; a share of the text colour lifts them.
+     */
+    val well = if (dark) lerp(cs.surfaceContainerHighest, cs.onSurface, 0.07f) else cs.surfaceContainer
     val wellHl = lerp(well, cs.primary, 0.18f)
     val fill = cs.tertiary
     val fillHl = lerp(cs.tertiary, cs.primary, 0.22f)
-    val seam = lerp(cs.tertiary, cs.onTertiary, 0.22f)
     val provisional = cs.secondary
     val cross = cs.onSurfaceVariant
     val autoCross = cs.outline
@@ -205,10 +216,7 @@ private class Roles(cs: ColorScheme) {
     val errorWash = cs.errorContainer.copy(alpha = 0.4f)
     val hintWash = cs.secondaryContainer
     val ring = cs.primary
-    val rip = cs.primary
     val pin = cs.outlineVariant
-    /** The page: block gutters and in-block hairlines are the page showing through. */
-    val page = cs.surface
     val miniBg = cs.surfaceContainerHigh
 }
 
@@ -216,7 +224,30 @@ private class Roles(cs: ColorScheme) {
 private class Wave(val dist: IntArray, val t: Animatable<Float, *>, val end: Float)
 
 private const val WAVE_STEP = 45f
-private const val WAVE_LEN = 340f
+/** Each tile's ripple: 150 ms up with an overshoot (Sudoku's hitIn), 330 ms back down. */
+private const val WAVE_UP = 150f
+private const val WAVE_LEN = 480f
+
+private fun ripple(local: Float): Float =
+    if (local < WAVE_UP) easeOutBack(local / WAVE_UP) else 0.5f * (1f + kotlin.math.cos(PI.toFloat() * (local - WAVE_UP) / (WAVE_LEN - WAVE_UP)))
+
+/** MaterialShapes.Square at the cell size and the cookie at its mark size, rebuilt only when a size changes. */
+private class TileShapes {
+    private var tileC = -1f
+    private val tilePath = Path()
+    private var cookieS = -1f
+    private val cookiePath = Path()
+    fun tile(c: Float): Path {
+        if (c != tileC) { morphPath(Morphs.of(Shp.square, Shp.square), 0f, Size(c, c), tilePath); tileC = c }
+        return tilePath
+    }
+    /** About MaterialShapes.Square's corner, for rings drawn around a tile. */
+    fun tileRadius(c: Float) = 0.28f * c
+    fun cookie(s: Float): Path {
+        if (s != cookieS) { morphPath(Morphs.of(MaterialShapes.Cookie4Sided, MaterialShapes.Cookie4Sided), 0f, Size(s, s), cookiePath); cookieS = s }
+        return cookiePath
+    }
+}
 
 /**
  * The Blocks board (README §3, "C · Blocks"): both clue bands and the grid on one Canvas, with the
@@ -229,6 +260,8 @@ fun Field(
     game: Game,
     ui: PlayUi,
     longPress: Boolean,
+    /** Settings → Look: empty cells marked with the cookie instead of the ×. */
+    cookie: Boolean,
     onFlash: () -> Unit,
     modifier: Modifier = Modifier,
     revealed: Boolean = true,
@@ -313,18 +346,21 @@ fun Field(
     val onFlashNow by rememberUpdatedState(onFlash)
     LaunchedEffect(game) {
         var lastTick = 0L
-        fun tick(fill: Boolean) {
-            // Rate-limited, so a flick across 15 cells reads as a run of ticks, not one buzz.
+        fun tick(to: Byte, count: Int = 0) {
+            // Every fifth cell of a run is a firmer detent and always plays; the rest are rate-limited,
+            // so a flick across 15 cells reads as a run of ticks, not one buzz.
             val now = SystemClock.uptimeMillis()
+            if (count > 0 && count % 5 == 0) { lastTick = now; buzz.detent(); return }
             if (now - lastTick < 28) return
             lastTick = now
-            if (fill) buzz.select() else buzz.lowTick()
+            when (to) { Mark.FILLED -> buzz.fill(); Mark.CROSSED -> buzz.cross(); else -> buzz.erase() }
         }
         game.fx.collect { fx ->
             when (fx) {
-                is Fx.Pressed -> { tick(fx.to == Mark.FILLED || (fx.to == Mark.UNKNOWN && fx.tool == Tool.FILL)); if (fx.to == Mark.FILLED) pop(fx.cell) else if (fx.to == Mark.CROSSED) drawIn(fx.cell) }
-                is Fx.Marked -> { tick(fx.to == Mark.FILLED); if (fx.to == Mark.FILLED) pop(fx.cell) else if (fx.to == Mark.CROSSED) drawIn(fx.cell) }
-                is Fx.Retracted -> { pops.remove(fx.cell); crossIn.remove(fx.cell) }
+                is Fx.Pressed -> { tick(fx.to); if (fx.to == Mark.FILLED) pop(fx.cell) else if (fx.to == Mark.CROSSED) drawIn(fx.cell) }
+                is Fx.Marked -> { tick(fx.to, fx.count); if (fx.to == Mark.FILLED) pop(fx.cell) else if (fx.to == Mark.CROSSED) drawIn(fx.cell) }
+                is Fx.Retracted -> { pops.remove(fx.cell); crossIn.remove(fx.cell); buzz.retract() }
+                Fx.StrokeCancelled -> buzz.cancel()
                 is Fx.ToolSwitched -> buzz.mode()
                 is Fx.AutoCrossed -> fx.cells.forEach { drawIn(it) }
                 is Fx.LinesDone -> {
@@ -361,9 +397,17 @@ fun Field(
                         scope.launch { b.animateTo(0f, tween(700)); blink.remove(l) }
                     }
                 }
-                Fx.Undone, Fx.Redone -> buzz.undo()
+                Fx.Undone -> buzz.undo()
+                Fx.Redone -> buzz.redo()
                 is Fx.HintShown -> buzz.hint()
-                is Fx.Checked -> if (fx.ok) buzz.toggle() else buzz.lowTick(1f)
+                is Fx.HintPlaced -> { buzz.hintPlace(); if (fx.to == Mark.FILLED) pop(fx.cell) else if (fx.to == Mark.CROSSED) drawIn(fx.cell) }
+                is Fx.Checked -> if (fx.ok) buzz.checkOk() else buzz.refused()
+                is Fx.WhatIf -> when (fx.phase) {
+                    WhatIfPhase.BEGIN -> buzz.whatIfBegin()
+                    WhatIfPhase.COMMIT -> buzz.whatIfKeep()
+                    WhatIfPhase.DISCARD -> buzz.whatIfDrop()
+                    WhatIfPhase.REFUSED -> buzz.refused()
+                }
                 is Fx.Won -> {
                     buzz.won()
                     // The crosses fade and the filled cells settle into the pattern; a wave runs out from the last cell.
@@ -402,7 +446,7 @@ fun Field(
         if (app.materialnonogram.BuildConfig.DEBUG) {
             val root = rootAt
             LaunchedEffect(root, geo.x(0), geo.y(0), geo.c, geo.view) {
-                android.util.Log.d("NonoGeo", "x0=${root.x + geo.x(0)} y0=${root.y + geo.y(0)} c=${geo.c} minor=${Blocks.MINOR * d} major=${Blocks.MAJOR * d} w=$W h=$H " +
+                android.util.Log.d("NonoGeo", "x0=${root.x + geo.x(0)} y0=${root.y + geo.y(0)} c=${geo.c} minor=${Blocks.minor(geo.L.c) * d} major=${Blocks.major(geo.L.c) * d} w=$W h=$H " +
                     "view=${root.x + geo.view.left},${root.y + geo.view.top},${root.x + geo.view.right},${root.y + geo.view.bottom} zoomed=${geo.zoomed} mini=${root.x + geo.mini.left},${root.y + geo.mini.top},${root.x + geo.mini.right},${root.y + geo.mini.bottom}")
             }
         }
@@ -430,6 +474,7 @@ fun Field(
 
         val path = remember { Path() }
         val shapePath = remember { Path() }
+        val shapes = remember { TileShapes() }
         val paused = game.paused
         val dealFrom = remember(game) { if (ui.sel >= 0) ui.sel else (H / 2) * W + W / 2 }
 
@@ -438,7 +483,6 @@ fun Field(
             val L = g.L
             val c = g.c
             val one = d
-            val minor = Blocks.MINOR * one
             // One read of each state per frame; the pending start cell shows as its target (instant response).
             val b = game.board.copyOf()
             val stroke = game.stroke
@@ -464,7 +508,7 @@ fun Field(
                     for (i in r.indices) {
                         val k = wv.dist[i]; if (k < 0) continue
                         val local = t - k * WAVE_STEP
-                        if (local in 0f..WAVE_LEN) r[i] = maxOf(r[i], sin(PI.toFloat() * local / WAVE_LEN))
+                        if (local in 0f..WAVE_LEN) r[i] = maxOf(r[i], ripple(local))
                     }
                 }
             }
@@ -483,6 +527,27 @@ fun Field(
             }
             val rows = g.firstRow()..g.lastRow()
             val cols = g.firstCol()..g.lastCol()
+            /** An empty-cell mark at full size about (cx, cy): Symbols' × as two round-capped strokes, or the cookie. */
+            fun DrawScope.mark(i: Int, cx: Float, cy: Float, c: Float, a0: Float) {
+                val a = auto[i]
+                val p = inC?.get(i) ?: 1f
+                // An auto-cross is quieter: smaller, and the × in outline grey.
+                val k = (if (a) 0.72f else 1f) * (0.55f + 0.45f * p)
+                val provisional = prov?.get(i) == true
+                if (cookie) {
+                    val s = 0.6f * c
+                    val col = if (provisional) roles.provisional else roles.cookie
+                    val cc = col.copy(alpha = col.alpha * a0 * p.coerceIn(0f, 1f) * (if (a) 0.7f else 1f))
+                    scale(k, k, Offset(cx, cy)) { translate(cx - s / 2, cy - s / 2) { drawPath(shapes.cookie(s), cc) } }
+                    return
+                }
+                val half = 0.19f * c * k
+                val sw = (if (a) 0.09f else 0.105f) * c
+                val col = when { provisional -> roles.provisional; a -> roles.autoCross; else -> roles.cross }
+                val cc = col.copy(alpha = col.alpha * a0 * p.coerceIn(0f, 1f))
+                drawLine(cc, Offset(cx - half, cy - half), Offset(cx + half, cy + half), sw, StrokeCap.Round)
+                drawLine(cc, Offset(cx + half, cy - half), Offset(cx - half, cy + half), sw, StrokeCap.Round)
+            }
             val bandA = alpha * chromeA * (if (paused) 0f else 1f)
 
             // ── Row band: thin numerals (wdth 25), right-aligned to the grid ──────────────────────
@@ -552,114 +617,49 @@ fun Field(
             // paints over the last digit of every row clue.
             val overhang = if (g.zoomed) (8 * one + g.panX).coerceAtLeast(0f) else 8 * one
             clipRect(g.view.left - overhang, if (g.zoomed) g.gridTop else 0f, if (g.zoomed) g.view.right else g.fieldW, g.fieldH) {
-                val blockR = minOf(12f, 0.42f * L.c) * one
-                val innerR = 1f * one
-                val fillR = minOf(8f, 0.3f * L.c) * one
-                // Wells. At rest each 5×5 block is one rounded tile with page-coloured hairlines over it;
-                // only cells that differ from a plain well (dealing, highlighted, hinted, in a wave) are drawn one by one.
-                val fast = revealed && !dealOn
-                if (fast) {
-                    val wc = roles.well.copy(alpha = roles.well.alpha * alpha)
-                    val hair = roles.page.copy(alpha = alpha)
-                    for (by in rows.first / 5..rows.last / 5) for (bx in cols.first / 5..cols.last / 5) {
-                        val x0 = bx * 5; val x1 = minOf(W - 1, x0 + 4); val y0 = by * 5; val y1 = minOf(H - 1, y0 + 4)
-                        val l = g.x(x0); val t = g.y(y0); val r = g.x(x1) + c; val bt = g.y(y1) + c
-                        drawRoundRect(wc, Offset(l, t), Size(r - l, bt - t), CornerRadius(blockR))
-                        for (k in x0 + 1..x1) drawRect(hair, Offset(g.x(k) - minor, t), Size(minor, bt - t))
-                        for (k in y0 + 1..y1) drawRect(hair, Offset(l, g.y(k) - minor), Size(r - l, minor))
-                    }
-                }
+                // Sudoku's Tiles (user, 2026-11-17): every cell is its own MaterialShapes.Square tile with a
+                // gap around it. A filled cell is the same tile in the fill colour; a finishing line morphs
+                // its tiles toward SoftBurst in a wave (Sudoku's unit ripple), turning and swelling as it passes.
+                val tile = shapes.tile(c)
+                val tileR = shapes.tileRadius(c)
+                val crossA = alpha * (1f - wonV)
                 for (y in rows) for (x in cols) {
                     val i = y * W + x
-                    if (fast) {
-                        val special = (playing && (y == selR || x == selC)) || i == hintCell ||
-                            (hintLine >= 0 && (if (hintLine < H) y == hintLine else x == hintLine - H)) ||
-                            (rip != null && rip[i] > 0f) || shakeL[y] != 0f || shakeL[H + x] != 0f
-                        if (!special) continue
-                    }
                     val ds = dealScale(i); if (ds <= 0.001f) continue
                     val X = g.x(x) + shakeL[y]; val Y = g.y(y) + shakeL[H + x]
-                    val hl = playing && (y == selR || x == selC)
-                    var col = if (hl) roles.wellHl else roles.well
-                    if (hintLine >= 0 && (if (hintLine < H) y == hintLine else x == hintLine - H)) col = lerp(col, roles.hintWash, brV * 0.9f)
-                    if (hintCell == i) col = lerp(col, roles.hintWash, brV)
-                    val rv = rip?.get(i) ?: 0f
-                    if (rv > 0f && b[i] != Mark.FILLED) col = lerp(col, roles.rip, 0.35f * rv)
-                    val tl = x % 5 == 0 && y % 5 == 0
-                    val tr = (x % 5 == 4 || x == W - 1) && y % 5 == 0
-                    val bl = x % 5 == 0 && (y % 5 == 4 || y == H - 1)
-                    val brr = (x % 5 == 4 || x == W - 1) && (y % 5 == 4 || y == H - 1)
-                    val s = ds
                     val cx = X + c / 2; val cy = Y + c / 2
-                    val hw = c / 2 * s
+                    val hl = playing && (y == selR || x == selC)
+                    val isFill = !paused && b[i] == Mark.FILLED
+                    val isProv = prov?.get(i) == true
+                    var col = when {
+                        isFill && isProv -> roles.provisional
+                        isFill -> if (hl) roles.fillHl else roles.fill
+                        hl -> roles.wellHl
+                        else -> roles.well
+                    }
+                    if (!isFill) {
+                        if (hintLine >= 0 && (if (hintLine < H) y == hintLine else x == hintLine - H)) col = lerp(col, roles.hintWash, brV * 0.9f)
+                        if (hintCell == i) col = lerp(col, roles.hintWash, brV)
+                    }
+                    val rv = rip?.get(i) ?: 0f
+                    if (rv > 0f) col = lerp(col, if (isFill) roles.ripFill else roles.ripWell, rv.coerceIn(0f, 1f) * 0.92f)
+                    val sc = ds * (if (isFill) popC?.get(i) ?: 1f else 1f) * (1f + 0.22f * rv)
                     val ca = col.copy(alpha = col.alpha * alpha)
-                    if (tl || tr || bl || brr) {
-                        path.rewind()
-                        path.addRoundRect(RoundRect(cx - hw, cy - hw, cx + hw, cy + hw,
-                            CornerRadius(if (tl) blockR * s else innerR), CornerRadius(if (tr) blockR * s else innerR),
-                            CornerRadius(if (brr) blockR * s else innerR), CornerRadius(if (bl) blockR * s else innerR)))
-                        drawPath(path, ca)
-                    } else drawRoundRect(ca, Offset(cx - hw, cy - hw), Size(2 * hw, 2 * hw), CornerRadius(innerR))
-                }
-                if (!paused) {
-                    // Fills: a run fuses across hairlines inside a block (never across a gutter), with a 1 dp seam.
-                    for (y in rows) for (x in cols) {
-                        val i = y * W + x
-                        if (b[i] != Mark.FILLED) continue
-                        val ds = dealScale(i); if (ds <= 0.001f) continue
-                        val X = g.x(x) + shakeL[y]; val Y = g.y(y) + shakeL[H + x]
-                        val R = filled(x + 1, y) && (x + 1) % 5 != 0
-                        val Lf = filled(x - 1, y) && x % 5 != 0
-                        val D = filled(x, y + 1) && (y + 1) % 5 != 0
-                        val U = filled(x, y - 1) && y % 5 != 0
-                        val rv = rip?.get(i) ?: 0f
-                        val s = (popC?.get(i) ?: 1f) * ds * (1f + 0.12f * rv)
-                        val hl = playing && (y == selR || x == selC)
-                        val isProv = prov?.get(i) == true
-                        val col = when { isProv -> roles.provisional; hl -> roles.fillHl; else -> roles.fill }
-                        fun rr(a: Boolean, bb: Boolean) = if (!a && !bb) fillR else 0f
-                        val w = c + if (R) minor else 0f
-                        val h = c + if (D) minor else 0f
-                        val cx = X + c / 2; val cy = Y + c / 2
-                        val a0 = rr(Lf, U); val a1 = rr(R, U); val a2 = rr(R, D); val a3 = rr(Lf, D)
-                        val uniform = a0 == a1 && a1 == a2 && a2 == a3
-                        val fc = col.copy(alpha = alpha)
-                        fun body(color: Color) {
-                            if (uniform) drawRoundRect(color, Offset(X, Y), Size(w, h), CornerRadius(a0))
-                            else {
-                                path.rewind()
-                                path.addRoundRect(RoundRect(X, Y, X + w, Y + h, CornerRadius(a0), CornerRadius(a1), CornerRadius(a2), CornerRadius(a3)))
-                                drawPath(path, color)
+                    val crossed = !paused && b[i] == Mark.CROSSED && crossA > 0.001f
+                    if (rv > 0.01f) {
+                        // The ripple: Square → SoftBurst, +14° and +22 % at the crest (Sudoku's drawTile).
+                        morphPath(Morphs.of(Shp.square, Shp.ripple), rv, Size(c, c), shapePath)
+                        rotate(14f * rv, Offset(cx, cy)) {
+                            scale(sc, sc, Offset(cx, cy)) {
+                                translate(X, Y) { drawPath(shapePath, ca) }
+                                if (crossed) mark(i, cx, cy, c, crossA)
                             }
                         }
-                        val draw: DrawScope.() -> Unit = {
-                            body(fc)
-                            val seam = lerp(roles.seam, col, wonV).copy(alpha = alpha)
-                            if (R) drawRect(seam, Offset(X + c, Y), Size(minor, c))
-                            if (D) drawRect(seam, Offset(X, Y + c), Size(c, minor))
-                            // The wave lifts a fill toward white: a flash of light in either theme, never a muddy wash.
-                            if (rv > 0f) body(Color.White.copy(alpha = 0.38f * rv * alpha))
-                        }
-                        if (s == 1f) draw() else scale(s, s, Offset(cx, cy)) { draw() }
+                        continue
                     }
-                    // Crosses: two round-capped strokes, 31 % → 69 %; an auto-cross is quieter (0.72×, outline).
-                    val crossA = alpha * (1f - wonV)
-                    if (crossA > 0.001f) for (y in rows) for (x in cols) {
-                        val i = y * W + x
-                        if (b[i] != Mark.CROSSED) continue
-                        val ds = dealScale(i); if (ds <= 0.001f) continue
-                        val X = g.x(x) + shakeL[y]; val Y = g.y(y) + shakeL[H + x]
-                        val a = auto[i]
-                        val p = inC?.get(i) ?: 1f
-                        val k = (if (a) 0.72f else 1f) * (0.55f + 0.45f * p) * ds
-                        val half = 0.19f * c * k
-                        val sw = (if (a) 0.09f else 0.105f) * c
-                        val col = when { prov?.get(i) == true -> roles.provisional; a -> roles.autoCross; else -> roles.cross }
-                        val cc = col.copy(alpha = col.alpha * crossA * p.coerceIn(0f, 1f))
-                        val cx = X + c / 2; val cy = Y + c / 2
-                        drawLine(cc, Offset(cx - half, cy - half), Offset(cx + half, cy + half), sw, StrokeCap.Round)
-                        drawLine(cc, Offset(cx + half, cy - half), Offset(cx - half, cy + half), sw, StrokeCap.Round)
-                    }
+                    if (sc == 1f) translate(X, Y) { drawPath(tile, ca) }
+                    else scale(sc, sc, Offset(cx, cy)) { translate(X, Y) { drawPath(tile, ca) } }
+                    if (crossed) { if (ds == 1f) mark(i, cx, cy, c, crossA) else scale(ds, ds, Offset(cx, cy)) { mark(i, cx, cy, c, crossA) } }
                 }
                 // The hint's cell: a breathing ring.
                 if (hintCell >= 0 && !paused) {
@@ -679,7 +679,7 @@ fun Field(
                     // Focus ring: 2.5 dp primary, 1 dp outset.
                     val X = g.x(selC); val Y = g.y(selR)
                     val o = 1f * one + 1.25f * one
-                    val rad = (if (b[sel] == Mark.FILLED) fillR else 2f * one) + o
+                    val rad = shapes.tileRadius(c) + o
                     drawRoundRect(roles.ring.copy(alpha = alpha), Offset(X - o, Y - o), Size(c + 2 * o, c + 2 * o), CornerRadius(rad), style = Stroke(2.5f * one))
                 }
                 // A refused mark: MaterialShapes.Burst at 1.6·c in error, turned −8°.
@@ -723,7 +723,7 @@ fun Field(
                     rootAt = o
                     val g = geoState.value
                     val vis = Rect(o.x + g.gridLeft, o.y + g.gridTop, o.x + g.gridLeft + minOf(g.viewW, g.gridWpx), o.y + g.gridTop + minOf(g.viewH, g.gridHpx))
-                    onGeo(GridGeo(Offset(o.x + g.x(0), o.y + g.y(0)), g.L.c, d, W, H, Blocks.MINOR * d, Blocks.MAJOR * d, vis))
+                    onGeo(GridGeo(Offset(o.x + g.x(0), o.y + g.y(0)), g.L.c, d, W, H, Blocks.minor(g.L.c) * d, Blocks.major(g.L.c) * d, vis))
                 }
                 .graphicsLayer { translationX = shake.value }
                 .pointerInput(game, locked, longPress, zoomable) {
@@ -804,7 +804,7 @@ fun Field(
                             val s = game.stroke ?: return Offset.Zero
                             if (!g.zoomed || !drawing || s.axis < 0 || s.stopped) return Offset.Zero
                             val band = maxOf(g.c * 0.8f, 20f * d)
-                            val max = 10f * (g.c + Blocks.MINOR * d) / 1000f
+                            val max = 10f * (g.c + Blocks.minor(g.L.c) * d) / 1000f
                             fun v(p: Float, lo: Float, hi: Float): Float = when {
                                 p > hi - band -> -max * ((p - (hi - band)) / band).coerceIn(0.25f, 1f)
                                 p < lo + band -> max * (((lo + band) - p) / band).coerceIn(0.25f, 1f)
@@ -847,8 +847,10 @@ fun Field(
                                 // A second finger cancels the stroke (it is reverted) and becomes pinch/pan.
                                 if (drawing) { game.cancelStroke(); drawing = false; ui.finger = null; ui.holdAt = null; ui.borrowed = false; ui.sel = selBefore }
                                 if (zg != null && pressed >= 2) {
+                                    // Each pinch starts its running size from the current zoom.
+                                    if (!transforming && !ui.peek) ui.pinchC = ui.zoomC
                                     transforming = true
-                                    transform(ev, ui, zoomGeoState.value ?: zg, d)
+                                    transform(ev, ui, zoomGeoState.value ?: zg, d, buzz)
                                     ev.changes.forEach { it.consume() }
                                 }
                                 if (pressed == 0) break
@@ -953,6 +955,9 @@ private fun A11yLayer(game: Game, g: FieldGeo, clues: app.materialnonogram.engin
 }
 
 private const val DEAL_STEP = 26f
+/** The overview opens when a pinch reaches 70 % of the zoom floor (16.8 dp; a fitted 20×20 is 15.4). */
+private const val PEEK_AT = Blocks.ZOOM_MIN * 0.7f
+private const val PEEK_BACK = PEEK_AT * 1.12f
 
 private fun easeOutBack(t: Float): Float {
     if (t <= 0f) return 0f
@@ -981,26 +986,40 @@ private suspend fun panTo(ui: PlayUi, g: FieldGeo, fx: Float, fy: Float, springs
     }
 }
 
-/** Two fingers: pinch about the centroid and pan. Under the drawing floor the overview peeks. */
-private fun transform(ev: PointerEvent, ui: PlayUi, g: FieldGeo, d: Float) {
+/**
+ * Two fingers: pinch about the centroid and pan. The zoom stops at its floor ([Blocks.ZOOM_MIN]); only a
+ * pinch carried well past it, to about the overview's own cell size ([PEEK_AT]), opens the overview,
+ * and it closes again a little above that ([PEEK_BACK]), so a pinch hovering at the floor can't flicker
+ * between them. It used to open the moment the floor was crossed — 15 % from the opening zoom — and
+ * fired on ordinary zooming out (user, 2026-11-17).
+ */
+private fun transform(ev: PointerEvent, ui: PlayUi, g: FieldGeo, d: Float, buzz: app.materialnonogram.ui.kit.Buzz) {
     val zoom = ev.calculateZoom()
     val pan = ev.calculatePan()
     val centroid = ev.calculateCentroid(useCurrent = true)
     if (centroid == Offset.Unspecified) return
-    val raw = (if (ui.peek) ui.pinchC else ui.zoomC) * zoom
-    if (raw < Blocks.ZOOM_MIN) {
-        if (!ui.peek) { ui.peek = true; ui.peekByPinch = true }
-        ui.pinchC = raw.coerceAtLeast(8f)
+    // The button's overview ignores pinches; a tap zooms back in.
+    if (ui.peek && !ui.peekByPinch) return
+    val raw = (ui.pinchC * zoom).coerceIn(8f, Blocks.ZOOM_MAX * 1.25f)
+    ui.pinchC = raw
+    if (ui.peek) {
+        if (raw < PEEK_BACK) return
+        ui.peek = false; ui.peekByPinch = false
+        buzz.zoomStop()
+    } else if (raw < PEEK_AT) {
+        ui.peek = true; ui.peekByPinch = true
+        buzz.overview()
         return
     }
-    if (ui.peek && ui.peekByPinch) { ui.peek = false; ui.peekByPinch = false }
-    val newC = raw.coerceAtMost(Blocks.ZOOM_MAX)
+    val newC = raw.coerceIn(Blocks.ZOOM_MIN, Blocks.ZOOM_MAX)
+    if ((newC == Blocks.ZOOM_MIN || newC == Blocks.ZOOM_MAX) && ui.zoomC != newC) buzz.zoomStop()
     val oldW = Blocks.span(g.L.w, ui.zoomC) * d; val newW = Blocks.span(g.L.w, newC) * d
     val oldH = Blocks.span(g.L.h, ui.zoomC) * d; val newH = Blocks.span(g.L.h, newC) * d
     val fx = (centroid.x - g.gridLeft - ui.panX) / oldW
     val fy = (centroid.y - g.gridTop - ui.panY) / oldH
     ui.zoomC = newC
-    ui.pinchC = newC
+    // Below the floor the running size keeps going down (toward the overview); above the ceiling it doesn't bank.
+    ui.pinchC = raw.coerceAtMost(Blocks.ZOOM_MAX)
     ui.panX = (centroid.x - g.gridLeft - fx * newW + pan.x).coerceIn(minOf(0f, g.viewW - newW), 0f)
     ui.panY = (centroid.y - g.gridTop - fy * newH + pan.y).coerceIn(minOf(0f, g.viewH - newH), 0f)
 }

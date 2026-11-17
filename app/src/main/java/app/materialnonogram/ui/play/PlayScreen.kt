@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
@@ -181,11 +182,12 @@ fun PlayScreen(
                     LevelChip(game, settings, timerHidden, halfwayLine)
                 }
                 if (ui.zoomable) SquishIcon(if (ui.peek) "zoom_in_map" else "fit_screen", if (ui.peek) "Zoom back in" else "See the whole board", {
-                    buzz.toggle(); ui.peekByPinch = false; ui.peek = !ui.peek
+                    if (ui.peek) buzz.select() else buzz.overview(); ui.peekByPinch = false; ui.peek = !ui.peek
                 }, size = ib, iconSize = 22.dp)
                 if (game.rules.checkButton) SquishIcon("fact_check", "Check for wrong marks", { game.check() }, size = ib, iconSize = 22.dp)
                 SquishIcon("alt_route", if (game.inWhatIf) "Leave what-if" else "What if…", {
-                    buzz.toggle(); if (game.inWhatIf) game.discardWhatIf() else game.beginWhatIf()
+                    // The game's WhatIf effect plays the haptic (begin, drop, or refused).
+                    if (game.inWhatIf) game.discardWhatIf() else game.beginWhatIf()
                 }, size = ib, iconSize = 22.dp, container = if (game.inWhatIf) cs.secondaryContainer else Color.Transparent, content = if (game.inWhatIf) cs.onSecondaryContainer else cs.onSurfaceVariant)
                 SquishIcon(if (game.paused) "play_arrow" else "pause", if (game.paused) "Resume" else "Pause", {
                     buzz.toggle(); game.pause(!game.paused)
@@ -211,7 +213,7 @@ fun PlayScreen(
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 val dead = game.status == Status.LOST
                 Field(
-                    game, ui, settings.longPress,
+                    game, ui, settings.longPress, settings.cookieCross,
                     onFlash = { scope.launch { flash.snapTo(1f); flash.animateTo(0f, tween(520)) } },
                     modifier = Modifier.fillMaxSize()
                         .then(if (game.paused) Modifier.blur(9.dp) else if (dead) Modifier.blur(5.dp) else Modifier)
@@ -226,10 +228,10 @@ fun PlayScreen(
             Box(Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
                 Strip(game, thinking, checkWord, filledWrong)
             }
-            Tools(game, ui, settings, onHint, Modifier.graphicsLayer { alpha = chrome.value; translationY = 48.dp.toPx() * (1f - chrome.value) })
+            androidx.compose.runtime.CompositionLocalProvider(LocalCookieCross provides settings.cookieCross) { Tools(game, ui, settings, onHint, Modifier.graphicsLayer { alpha = chrome.value; translationY = 48.dp.toPx() * (1f - chrome.value) }) }
             Spacer(Modifier.height(14.dp))
         }
-        Overlays(game, ui, screenW)
+        androidx.compose.runtime.CompositionLocalProvider(LocalCookieCross provides settings.cookieCross) { Overlays(game, ui, screenW) }
         // The screen edge flashes error on a mistake.
         Box(
             Modifier.fillMaxSize().graphicsLayer { alpha = flash.value }.drawBehind {
@@ -338,10 +340,18 @@ private fun Bubble(at: Offset, column: Boolean, screenW: Float, d: Float, tool: 
 
 private fun Modifier.matchParentSizeCompat(w: Float, h: Float, d: Float) = this.size((w / d).dp, (h / d).dp)
 
-/** Fill is a rounded square (the filled cell); Cross is Symbols' close. */
+/** Settings → Look → "Mark empty cells with": the cookie instead of the ×. Provided by [PlayScreen]. */
+val LocalCookieCross = androidx.compose.runtime.compositionLocalOf { false }
+
+/** Fill is a rounded square (the filled cell); Cross is Symbols' close, or the four-sided cookie. */
 @Composable
-fun ToolGlyph(tool: Tool, size: androidx.compose.ui.unit.Dp, color: Color) {
-    if (tool == Tool.CROSS) Icon(Sym["close"], null, Modifier.size(size), tint = color)
+fun ToolGlyph(tool: Tool, size: androidx.compose.ui.unit.Dp, color: Color, cookie: Boolean = LocalCookieCross.current) {
+    if (tool == Tool.CROSS && cookie) Canvas(Modifier.size(size)) {
+        val s = this.size.width * 0.8f
+        val p = app.materialnonogram.ui.kit.morphPath(app.materialnonogram.ui.kit.Morphs.of(androidx.compose.material3.MaterialShapes.Cookie4Sided, androidx.compose.material3.MaterialShapes.Cookie4Sided), 0f, Size(s, s))
+        translate((this.size.width - s) / 2, (this.size.height - s) / 2) { drawPath(p, color) }
+    }
+    else if (tool == Tool.CROSS) Icon(Sym["close"], null, Modifier.size(size), tint = color)
     else Canvas(Modifier.size(size)) {
         val k = this.size.width / 24f
         drawRoundRect(color, Offset(4 * k, 4 * k), Size(16 * k, 16 * k), CornerRadius(4.5f * k))

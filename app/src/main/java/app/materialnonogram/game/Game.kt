@@ -520,6 +520,7 @@ class Game(
         cur[c] = v.hint.value; curAuto[c] = false
         val id = strokeSeq++
         logCell(Ev.HINT_MARK, c, v.hint.value, id)
+        emit(Fx.HintPlaced(c, v.hint.value))
         commit(undo, bs, bc, c, id)
         return true
     }

@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -175,6 +176,19 @@ fun SettingsScreen(model: AppModel, s: Settings) {
                 }
             }
 
+            Label("Mark empty cells with")
+            Pad {
+                val cookie = app.materialnonogram.ui.theme.cookieColor(cs, cs.surface.luminance() < 0.5f)
+                TileRow(
+                    listOf(
+                        Choice("Cross", preview = { CellPreview(cookie = false, cookieColor = cookie) }),
+                        Choice("Cookie", preview = { CellPreview(cookie = true, cookieColor = cookie) }),
+                    ),
+                    if (s.cookieCross) 1 else 0, height = 104.dp,
+                ) { k -> set { it.copy(cookieCross = k == 1) } }
+            }
+            Info("info", "The cookie takes a colour your theme isn't using, so it never looks like a filled cell.")
+
             Label("App name on your phone")
             Pad { Segmented(listOf("Nonogram", "イラロジ"), if (s.kanjiName) 1 else 0) { k -> set { it.copy(kanjiName = k == 1) } } }
             Info("info", "The name under the icon. Switching it can take the icon off your home screen; it stays in All apps.")
@@ -276,7 +290,7 @@ private fun SwitchRow(icon: String, title: String, sub: String, on: Boolean, onC
     }
 }
 
-private data class Choice(val name: String, val sub: String? = null, val icon: String? = null, val heartsIcon: Boolean = false)
+private data class Choice(val name: String, val sub: String? = null, val icon: String? = null, val heartsIcon: Boolean = false, val preview: (@Composable () -> Unit)? = null)
 
 /** Home's tiles: connected corners at rest, springing to full corners and secondary when chosen. */
 @Composable
@@ -302,8 +316,9 @@ private fun TileRow(items: List<Choice>, sel: Int, height: Dp, enabled: Boolean 
             ) {
                 Column(Modifier.padding(horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     if (c.heartsIcon) app.materialnonogram.ui.kit.Hearts(3, 3, 22.dp, color = fg)
+                    else if (c.preview != null) c.preview.invoke()
                     else if (c.icon != null) Icon(Sym[c.icon], null, Modifier.size(26.dp))
-                    if (c.heartsIcon || c.icon != null) Spacer(Modifier.height(6.dp))
+                    if (c.heartsIcon || c.icon != null || c.preview != null) Spacer(Modifier.height(6.dp))
                     Text(c.name, style = ts(16f, if (on) 720 else 580), maxLines = 1)
                     if (c.sub != null) Text(c.sub, style = ts(12.5f, 440, if (on) fg.copy(alpha = 0.8f) else cs.onSurfaceVariant, lineHeight = 16f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                 }
@@ -490,5 +505,30 @@ private fun ExportRows(model: AppModel) {
     Group {
         GroupRow { RowBody("download", "Export your games", "All $n games as a spreadsheet file (CSV)", chevron = true) { csv.launch("nonogram-games.csv") } }
         GroupRow { RowBody("history", "Export every move", "Each move of each game with its timestamp, for your own analysis", chevron = true) { json.launch("nonogram-moves.json") } }
+    }
+}
+
+/** Three board tiles — filled, marked empty, filled — as the board draws them, for the mark picker. */
+@Composable
+private fun CellPreview(cookie: Boolean, cookieColor: Color) {
+    val cs = MaterialTheme.colorScheme
+    androidx.compose.foundation.Canvas(Modifier.size(width = 112.dp, height = 34.dp)) {
+        val c = size.height; val gap = 0.075f * c * 2
+        val square = app.materialnonogram.ui.kit.morphPath(app.materialnonogram.ui.kit.Morphs.of(androidx.compose.material3.MaterialShapes.Square, androidx.compose.material3.MaterialShapes.Square), 0f, androidx.compose.ui.geometry.Size(c, c))
+        val x0 = (size.width - 3 * c - 2 * gap) / 2
+        for (k in 0..2) {
+            val x = x0 + k * (c + gap)
+            translate(x, 0f) { drawPath(square, if (k == 1) cs.surfaceContainerHigh else cs.tertiary) }
+        }
+        val cx = x0 + c + gap + c / 2; val cy = c / 2
+        if (cookie) {
+            val m = 0.6f * c
+            val p = app.materialnonogram.ui.kit.morphPath(app.materialnonogram.ui.kit.Morphs.of(androidx.compose.material3.MaterialShapes.Cookie4Sided, androidx.compose.material3.MaterialShapes.Cookie4Sided), 0f, androidx.compose.ui.geometry.Size(m, m))
+            translate(cx - m / 2, cy - m / 2) { drawPath(p, cookieColor) }
+        } else {
+            val h = 0.19f * c; val sw = 0.105f * c
+            drawLine(cs.onSurfaceVariant, androidx.compose.ui.geometry.Offset(cx - h, cy - h), androidx.compose.ui.geometry.Offset(cx + h, cy + h), sw, androidx.compose.ui.graphics.StrokeCap.Round)
+            drawLine(cs.onSurfaceVariant, androidx.compose.ui.geometry.Offset(cx + h, cy - h), androidx.compose.ui.geometry.Offset(cx - h, cy + h), sw, androidx.compose.ui.graphics.StrokeCap.Round)
+        }
     }
 }

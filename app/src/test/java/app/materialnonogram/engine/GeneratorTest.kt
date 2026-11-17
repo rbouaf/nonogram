@@ -24,6 +24,23 @@ class GeneratorTest {
         }
     }
 
+    /** D10 as amended 2026-11-17: an empty line is a flat line, and so is a full one, but only the empty one is rejected. */
+    @Test fun emptyAndFullLines() {
+        val full = Puzzle(3, 3, BooleanArray(9) { it < 3 || it % 3 == 0 })          // ###/#../#..
+        assertTrue(full.hasFullLine()); assertFalse(full.hasEmptyLine()); assertTrue(full.hasFlatLine())
+        val empty = Puzzle(3, 3, BooleanArray(9) { it == 0 || it == 1 || it == 3 || it == 7 }) // ##./#../.#.
+        assertTrue(empty.hasEmptyLine()); assertFalse(empty.hasFullLine())
+        val neither = Puzzle(3, 3, BooleanArray(9) { it == 0 || it == 4 || it == 8 || it == 1 })
+        assertFalse(neither.hasEmptyLine()); assertFalse(neither.hasFullLine()); assertFalse(neither.hasFlatLine())
+    }
+
+    /** Version 2 allows full lines: the high-fill tiers produce them (most 5×5 and 10×10 Easies have one). */
+    @Test fun fullLinesAreGenerated() {
+        val easy = (0L until 20L).map { Generator.generate(Size.S10, Tier.EASY, it).puzzle }
+        assertTrue(easy.count { it.hasFullLine() } >= 5)
+        assertTrue(easy.none { it.hasEmptyLine() })
+    }
+
     @Test fun offeredCells() {
         assertFalse(Generator.isOffered(Size.S5, Tier.MASTER))
         assertFalse(Generator.isOffered(Size.S10, Tier.MASTER))
@@ -36,7 +53,7 @@ class GeneratorTest {
 
     /**
      * Every offered size × tier generates within its attempt budget, without falling back, and the
-     * result obeys every rule: no flat line (D10), the tier's rule, a finished grade, the right size.
+     * result obeys every rule: no empty line (D10), the tier's rule, a finished grade, the right size.
      */
     @Test fun everyOfferedCellGeneratesWithinBudget() {
         for (gen in Fixtures.generated) {
@@ -44,7 +61,7 @@ class GeneratorTest {
             assertFalse(what, gen.fallback)
             assertTrue(what, gen.attempt < Generator.maxAttempts(gen.tier))
             assertEquals(what, gen.size.w, gen.puzzle.w); assertEquals(what, gen.size.h, gen.puzzle.h)
-            assertFalse(what, gen.puzzle.hasFlatLine())
+            assertFalse(what, gen.puzzle.hasEmptyLine())
             assertTrue(what, gen.grade.solved)
             assertTrue(what, Generator.accepts(gen.tier, gen.size, gen.grade))
             assertTrue(what, gen.fillPermille in Generator.band(gen.tier))
@@ -81,12 +98,13 @@ class GeneratorTest {
     }
 
     /**
-     * Golden seed → puzzle for `Generator.VERSION` 1: `golden/gen-v1.tsv` holds seeds 0–4 of every
+     * Golden seed → puzzle for `Generator.VERSION` 2: `golden/gen-v2.tsv` holds seeds 0–4 of every
      * offered cell (share code, attempt, fill, grade key). A mismatch is a bug or a version bump,
-     * never a judgement call (03 §4). Regenerate with `Bench golden` on tools/engine-jvm.
+     * never a judgement call (03 §4). Regenerate with `Bench golden 5` on tools/engine-jvm.
      */
     @Test fun goldenSeedToPuzzle() {
-        val rows = Fixtures.resource("gen-v1.tsv").lines().filter { it.isNotBlank() && !it.startsWith("#") }
+        assertEquals(2, Generator.VERSION)
+        val rows = Fixtures.resource("gen-v${Generator.VERSION}.tsv").lines().filter { it.isNotBlank() && !it.startsWith("#") }
         assertEquals(28 * 5, rows.size)
         for (row in rows) {
             val f = row.split('\t')

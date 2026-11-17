@@ -21,13 +21,16 @@ class Generated(
  * Deterministic `(generatorVersion, size, tier, seed) → puzzle` (03 §3.2, `NonoDet.generate`).
  *
  * Each attempt k draws from its own sub-seed, picks a fill in the tier's permille band, makes an
- * integer-only blob (D3), rejects flat lines (D10), then the cheap pre-filters (line-solvable or not,
+ * integer-only blob (D3), rejects any all-empty line (D10; full lines are allowed since VERSION 2), then the cheap pre-filters (line-solvable or not,
  * then line + P1 solvable), then grades with the order-free [Grader] and checks the tier rule. A
  * finished grade is the uniqueness proof; there is never a uniqueness search. Budgets count attempts.
  */
 object Generator {
-    /** Covers everything on the accept path: PRNG use, blob, bands, flat-line rule, budgets, tier rule (03 §4). */
-    const val VERSION = 1
+    /**
+     * Covers everything on the accept path: PRNG use, blob, bands, empty-line rule, budgets, tier rule (03 §4).
+     * 1: rejected full and empty lines. 2 (2026-11-17): full lines allowed, empty lines still rejected (D10).
+     */
+    const val VERSION = 2
 
     /** Fill bands in permille, `[lo, hi)`, indexed by [Tier.ordinal]. */
     private val BAND_LO = intArrayOf(620, 550, 450, 300, 250)
@@ -40,10 +43,11 @@ object Generator {
     const val EXPERT_MAX_P1 = 3
 
     /**
-     * Hard: Jacobi L3 sweeps from blank ≥ the size's median for line-solvable Hard-band blobs,
-     * indexed by [Size.ordinal]. Measured by `tools/engine-jvm` `Calibrate` (docs/ENGINE.md).
+     * Hard: Jacobi L3 sweeps from blank ≥ the size's median for line-solvable, empty-line-free Hard-band
+     * blobs, indexed by [Size.ordinal]. Measured by `tools/engine-jvm` `Bench sweeps 3000` (docs/ENGINE.md).
+     * VERSION 2 moved 5×5 from 4 to 3 (full lines are allowed now); the other sizes did not move.
      */
-    private val HARD_MIN_SWEEPS = intArrayOf(4, 5, 8, 6, 9, 11)
+    private val HARD_MIN_SWEEPS = intArrayOf(3, 5, 8, 6, 9, 11)
 
     /** Attempt budgets per tier. Accepts take 1–2 attempts for line tiers and tens to hundreds for look-ahead ones. */
     private val MAX_ATTEMPTS = intArrayOf(2_000, 2_000, 4_000, 20_000, 20_000)
@@ -130,7 +134,7 @@ object Generator {
         for (k in 0 until MAX_ATTEMPTS[tier.ordinal]) {
             if (isCancelled()) throw CancellationException("generation cancelled")
             val (p, fill) = candidate(size, tier, seed, k)
-            if (p.hasFlatLine()) continue
+            if (p.hasEmptyLine()) continue
             val clues = p.clues
             val lineOnly = Grader.isLineSolvable(clues)
             if (tier.isLineOnly != lineOnly) continue

@@ -36,6 +36,8 @@ data class Settings(
     val hints: Boolean = true,
     /** D5: holding still on the start cell switches the stroke to the other tool. */
     val longPress: Boolean = true,
+    /** How an empty cell is marked on the board: Symbols' ×, or a four-sided cookie in a hue the theme isn't using. */
+    val cookieCross: Boolean = false,
     val showTimer: Boolean = true,
     /** Once per game at half the cells: pace, or a word of encouragement. */
     val halfwayMessage: Boolean = true,
@@ -71,6 +73,7 @@ class SettingsStore(private val context: Context) {
         val check = booleanPreferencesKey("check_button")
         val hints = booleanPreferencesKey("hints")
         val longPress = booleanPreferencesKey("long_press")
+        val cookie = booleanPreferencesKey("cookie_cross")
         val timer = booleanPreferencesKey("show_timer")
         val halfway = booleanPreferencesKey("halfway_message")
         val theme = stringPreferencesKey("theme")
@@ -97,6 +100,7 @@ class SettingsStore(private val context: Context) {
             checkButton = p[K.check] ?: d.checkButton,
             hints = p[K.hints] ?: d.hints,
             longPress = p[K.longPress] ?: d.longPress,
+            cookieCross = p[K.cookie] ?: d.cookieCross,
             showTimer = p[K.timer] ?: d.showTimer,
             halfwayMessage = p[K.halfway] ?: d.halfwayMessage,
             theme = p[K.theme]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: d.theme,
@@ -116,7 +120,7 @@ class SettingsStore(private val context: Context) {
             p[K.tiers] = s.tiers; p[K.sizes] = s.sizes
             p[K.flag] = s.flagMistakes; p[K.lives] = s.lives
             p[K.autoCross] = s.autoCross; p[K.contra] = s.contradictionFlag; p[K.check] = s.checkButton
-            p[K.hints] = s.hints; p[K.longPress] = s.longPress
+            p[K.hints] = s.hints; p[K.longPress] = s.longPress; p[K.cookie] = s.cookieCross
             p[K.timer] = s.showTimer; p[K.halfway] = s.halfwayMessage
             p[K.theme] = s.theme.name; p[K.amoled] = s.amoled
             if (s.seed == null) p.remove(K.seed) else p[K.seed] = s.seed.name

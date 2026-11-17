@@ -590,6 +590,8 @@ private fun Lost(g: Game, r: Report) {
             }
         }
     }
+    // The same timeline a win gets: progress over time, every stroke, and the strikes where they fell.
+    Timeline(g, r, null)
     Text("A loss keeps no time record. It counts once in your stats as a loss.", Modifier.padding(start = 22.dp, end = 22.dp, top = 10.dp), style = ts(12f, 500, cs.onSurfaceVariant, lineHeight = 16f))
 }
 

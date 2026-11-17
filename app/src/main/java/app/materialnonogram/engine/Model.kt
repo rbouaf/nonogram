@@ -143,15 +143,23 @@ class Puzzle(val w: Int, val h: Int, bits: BooleanArray) {
     fun solution(): BooleanArray = bits.copyOf()
     fun filledCount(): Int = bits.count { it }
 
-    /** True if some row or column is entirely filled or entirely empty (rejected by D10). */
-    fun hasFlatLine(): Boolean {
+    /** True if some row or column is entirely empty, a lone "0" clue (rejected by D10). */
+    fun hasEmptyLine(): Boolean = hasLineOfCount(full = false)
+
+    /** True if some row or column is entirely filled (allowed again by D10 as amended 2026-11-17). */
+    fun hasFullLine(): Boolean = hasLineOfCount(full = true)
+
+    /** True if some row or column is entirely filled or entirely empty (generator version 1's D10 rule). */
+    fun hasFlatLine(): Boolean = hasEmptyLine() || hasFullLine()
+
+    private fun hasLineOfCount(full: Boolean): Boolean {
         for (r in 0 until h) {
             var n = 0; for (c in 0 until w) if (bits[r * w + c]) n++
-            if (n == 0 || n == w) return true
+            if (n == (if (full) w else 0)) return true
         }
         for (c in 0 until w) {
             var n = 0; for (r in 0 until h) if (bits[r * w + c]) n++
-            if (n == 0 || n == h) return true
+            if (n == (if (full) h else 0)) return true
         }
         return false
     }

@@ -58,6 +58,34 @@ class Buzz(context: Context) {
     fun toggle() = play(P(PRIMITIVE_TICK, 0.6f))
     fun lowTick(scale: Float = 0.6f) = play(P(PRIMITIVE_LOW_TICK, scale))
 
+    // ── Nonogram marks: each kind of cell change has its own feel ────────────────────────────────
+    /** A cell filled: a crisp click, lighter than Sudoku's key so a 15-cell flick doesn't numb the hand. */
+    fun fill() = play(P(PRIMITIVE_CLICK, 0.42f), fallback = VibrationEffect.EFFECT_TICK)
+    /** A cell crossed: a dull low tick. */
+    fun cross() = play(P(PRIMITIVE_LOW_TICK, 0.7f))
+    /** A mark erased: the faintest tick. */
+    fun erase() = play(P(PRIMITIVE_TICK, 0.3f))
+    /** Every fifth cell of a stroke, as on a ruler: a firmer click, so a run can be counted by feel. */
+    fun detent() = play(P(PRIMITIVE_CLICK, 0.85f), fallback = VibrationEffect.EFFECT_CLICK)
+    /** The finger pulled back and a cell reverted. */
+    fun retract() = play(P(PRIMITIVE_LOW_TICK, 0.35f))
+    /** A second finger landed and the stroke was taken back. */
+    fun cancel() = play(P(PRIMITIVE_QUICK_FALL, 0.4f))
+    /** Redo rises where undo falls. */
+    fun redo() = play(P(PRIMITIVE_QUICK_RISE, 0.45f))
+    /** A hint placing its cell for you lands like a key. */
+    fun hintPlace() = play(P(PRIMITIVE_QUICK_RISE, 0.4f), P(PRIMITIVE_CLICK, 0.7f, 40))
+    /** Trying a guess: a lift; keeping it settles; dropping it falls away; refused is a dull double tick. */
+    fun whatIfBegin() = play(P(PRIMITIVE_QUICK_RISE, 0.5f), P(PRIMITIVE_TICK, 0.5f, 30))
+    fun whatIfKeep() = play(P(PRIMITIVE_SLOW_RISE, 0.4f), P(PRIMITIVE_CLICK, 0.7f, 20))
+    fun whatIfDrop() = play(P(PRIMITIVE_QUICK_FALL, 0.6f))
+    fun refused() = play(P(PRIMITIVE_LOW_TICK, 0.9f), P(PRIMITIVE_LOW_TICK, 0.9f, 70))
+    /** The check found nothing wrong: a bright double tick. */
+    fun checkOk() = play(P(PRIMITIVE_TICK, 0.7f), P(PRIMITIVE_CLICK, 0.6f, 60))
+    /** Zoom hit its floor or ceiling, or the overview opened: a soft stop. */
+    fun zoomStop() = play(P(PRIMITIVE_LOW_TICK, 0.5f))
+    fun overview() = play(P(PRIMITIVE_QUICK_FALL, 0.45f), P(PRIMITIVE_TICK, 0.5f, 30))
+
     /**
      * A line, box or diagonal completes: one tick per tile as the wave passes it, rising in strength,
      * landing on a click; two or more at once land on a thud. Paced to the board's wave (step ms).

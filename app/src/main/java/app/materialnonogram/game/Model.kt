@@ -191,6 +191,8 @@ sealed interface Fx {
     data object Undone : Fx
     data object Redone : Fx
     data class HintShown(val view: HintView) : Fx
+    /** The fourth hint press placed [cell] as [to] for the player. */
+    data class HintPlaced(val cell: Int, val to: Byte) : Fx
     data class Checked(val ok: Boolean) : Fx
     /** Half the cells are marked (counted, never checked: it leaks nothing). */
     data object Halfway : Fx
