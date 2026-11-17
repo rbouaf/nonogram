@@ -79,8 +79,11 @@ import app.materialnonogram.AppModel
 import app.materialnonogram.R
 import app.materialnonogram.Screen
 import app.materialnonogram.data.Settings
-import app.materialnonogram.legacy.game.Game
-import app.materialnonogram.legacy.game.Geo
+import app.materialnonogram.engine.Generator
+import app.materialnonogram.engine.Size as PSize
+import app.materialnonogram.engine.Tier
+import app.materialnonogram.game.Game
+import app.materialnonogram.game.Mark
 import app.materialnonogram.ui.kit.Hearts
 import app.materialnonogram.ui.kit.LocalBuzz
 import app.materialnonogram.ui.kit.LocalSprings
@@ -90,8 +93,7 @@ import app.materialnonogram.ui.kit.Shp
 import app.materialnonogram.ui.kit.SquishIcon
 import app.materialnonogram.ui.kit.Sym
 import app.materialnonogram.ui.kit.morphPath
-import app.materialnonogram.ui.play.DIFFICULTY_NAMES
-import app.materialnonogram.ui.play.LENGTH_NAMES
+import app.materialnonogram.ui.play.TIER_NAMES
 import app.materialnonogram.ui.theme.flex
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -99,13 +101,11 @@ import kotlinx.coroutines.launch
 private val TitleFont = FontFamily(Font(R.font.noto_sans_jp_title, FontWeight.ExtraBold))
 
 val DIFFICULTY_TECH = listOf(
-    "Scanning only: a number that has one place left in its box, row or column.",
-    "Adds cells with one number left (naked singles), and pointing and claiming.",
-    "Adds pairs, triples and quads, naked and hidden.",
-    "Adds one-number patterns: X-Wing, Skyscraper, Kite, Empty Rectangle, Swordfish.",
-    "Adds multi-number patterns: XY-Wing, XYZ-Wing, W-Wing, unique rectangles, BUG+1.",
-    "Adds chains: X-Chain, XY-Chain, alternating inference chains.",
-    "The hardest puzzles known. Hints can't help.",
+    "One line at a time, and the first look already places many cells. Dense patterns.",
+    "One line at a time, with fewer cells handed to you at the start.",
+    "One line at a time, but many passes across the board. Sparser patterns.",
+    "Somewhere you have to look ahead: try a cell, follow it, and see a line break. One to three times.",
+    "Looking ahead four or more times. From 15×15 up only.",
 )
 
 /**
@@ -118,11 +118,15 @@ fun HomeScreen(model: AppModel, settings: Settings) {
     val cs = MaterialTheme.colorScheme
     val buzz = LocalBuzz.current
     val running = model.current
-    val enabled = (0..6).filter { settings.difficultyOn(it) }.ifEmpty { listOf(0) }
-    var d by remember { mutableIntStateOf(settings.lastDifficulty.takeIf { it in enabled } ?: enabled.first()) }
-    var l by remember { mutableIntStateOf(settings.lastLength) }
+    val enabled = Tier.entries.filter { settings.tierOn(it) }.map { it.ordinal }.ifEmpty { listOf(0) }
+    val sizes = PSize.entries.filter { settings.sizeOn(it) }.ifEmpty { listOf(PSize.S10) }
+    var d by remember { mutableIntStateOf(settings.lastTier.takeIf { it in enabled } ?: enabled.first()) }
+    var sz by remember { mutableStateOf(PSize.entries[settings.lastSize].takeIf { it in sizes } ?: sizes.first()) }
+    // D7: combinations that don't exist (5×5 and 10×10 Master) are greyed both ways; picking one side
+    // moves the other to the nearest one that does.
+    fun fix(tier: Int) { if (!Generator.isOffered(sz, Tier.entries[tier])) sizes.firstOrNull { Generator.isOffered(it, Tier.entries[tier]) }?.let { sz = it } }
+    LaunchedEffect(d, sz) { if (Generator.isOffered(sz, Tier.entries[d])) model.prefetch(sz, Tier.entries[d]) }
     val inProgress = running != null
-    LaunchedEffect(d, l) { model.prefetch(d, l) }
 
     Column(Modifier.fillMaxSize().systemBarsPadding()) {
         Row(Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -144,15 +148,15 @@ fun HomeScreen(model: AppModel, settings: Settings) {
         Spacer(Modifier.height(22.dp))
         Column(Modifier.padding(horizontal = 16.dp)) {
             Label("Difficulty")
-            DifficultyTiles(enabled, d) { k -> d = k; buzz.difficulty(k); model.updateSettings { it.copy(lastDifficulty = k) } }
+            DifficultyTiles(enabled, d, sz) { k -> d = k; fix(k); buzz.difficulty(k); model.updateSettings { it.copy(lastTier = k, lastSize = sz.ordinal) } }
             Spacer(Modifier.height(14.dp))
-            Label("Length")
-            LengthTiles(l) { k -> l = k; buzz.length(k); model.updateSettings { it.copy(lastLength = k) } }
+            Label("Size")
+            SizeTiles(sizes, sz, Tier.entries[d]) { s -> sz = s; buzz.length(sizes.indexOf(s).coerceAtMost(2)); model.updateSettings { it.copy(lastSize = s.ordinal) } }
         }
         // The big shape takes what height is left: 222 dp at most, and its echo (1.26×) must clear the pickers.
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(bottom = 22.dp), contentAlignment = Alignment.Center) {
             val size = minOf(222.dp, (maxHeight - 12.dp) / 1.3f)
-            BigStart(d, l, inProgress, model.starting, size) { rect -> buzz.start(); model.start(d, l, app.materialnonogram.ui.play.Intro.Start(rect, d, subdued = inProgress)) }
+            BigStart(d, sz, inProgress, model.starting, size) { rect -> buzz.start(); model.start(Tier.entries[d], sz, app.materialnonogram.ui.play.Intro.Start(rect, d, subdued = inProgress)) }
         }
     }
 }
@@ -199,16 +203,17 @@ private fun ContinueCard(g: Game, onClick: (app.materialnonogram.ui.play.Intro) 
     val density = androidx.compose.ui.platform.LocalDensity.current
     var cardRect by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     var thumbAt by remember { mutableStateOf(Offset.Zero) }
+    val tg = thumbGeo(g)
     fun intro() = with(density) {
         app.materialnonogram.ui.play.Intro.Continue(
             cardRect, 40.dp.toPx(),
-            app.materialnonogram.ui.play.GridGeo(thumbAt + Offset(8.dp.toPx(), 8.dp.toPx()), 19.dp.toPx(), 1.6.dp.toPx(), 5.dp.toPx()),
+            app.materialnonogram.ui.play.GridGeo(thumbAt + Offset(tg.pad.toPx(), tg.pad.toPx()), tg.cell.value, density.density, g.w, g.h, tg.gap.toPx(), tg.gut.toPx()),
         )
     }
     val springs = LocalSprings.current
     var pressed by remember { mutableStateOf(false) }
     val p by animateFloatAsState(if (pressed) 1f else 0f, springs.fast(), label = "p")
-    val desc = "Continue, ${DIFFICULTY_NAMES[g.deal.difficulty]}, ${LENGTH_NAMES[g.deal.length]} length, ${timeLabel(g.elapsed)}" +
+    val desc = "Continue, ${TIER_NAMES[g.deal.tier.ordinal]}, ${g.w} by ${g.h}, ${timeLabel(g.elapsed)}" +
         if (g.rules.flagMistakes) ", ${g.lives} of ${g.rules.lives} lives" else ""
     Surface(
         color = cs.primaryContainer, contentColor = cs.onPrimaryContainer,
@@ -220,14 +225,14 @@ private fun ContinueCard(g: Game, onClick: (app.materialnonogram.ui.play.Intro) 
             .pointerInput(Unit) { detectTapGestures(onPress = { pressed = true; tryAwaitRelease(); pressed = false }, onTap = { onClick(intro()) }) },
     ) {
         Row(Modifier.padding(start = 13.dp, top = 13.dp, bottom = 13.dp, end = 14.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Thumb(g, cell = 19.dp, gap = 1.6.dp, gut = 5.dp, pad = 8.dp, radius = 26.dp, modifier = Modifier.onGloballyPositioned { thumbAt = it.boundsInRoot().topLeft })
+            Thumb(g, tg, radius = 26.dp, modifier = Modifier.onGloballyPositioned { thumbAt = it.boundsInRoot().topLeft })
             Column(Modifier.weight(1f).fillMaxHeight().padding(top = 6.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    ShapeGlyph(Shp.difficulty[g.deal.difficulty], 22.dp, cs.onPrimaryContainer)
+                    ShapeGlyph(Shp.difficulty[g.deal.tier.ordinal], 22.dp, cs.onPrimaryContainer)
                     Spacer(Modifier.width(8.dp))
-                    Text(DIFFICULTY_NAMES[g.deal.difficulty], maxLines = 1, style = TextStyle(fontFamily = flex(26f, 680), fontSize = 26.sp, lineHeight = 30.sp))
+                    Text(TIER_NAMES[g.deal.tier.ordinal], maxLines = 1, style = TextStyle(fontFamily = flex(26f, 680), fontSize = 26.sp, lineHeight = 30.sp))
                 }
-                Text("${LENGTH_NAMES[g.deal.length]} length", modifier = Modifier.graphicsLayer { alpha = 0.8f }, style = MaterialTheme.typography.bodyMedium)
+                Text("${g.w}×${g.h}", modifier = Modifier.graphicsLayer { alpha = 0.8f }, style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"))
                 Spacer(Modifier.weight(1f))
                 Column(Modifier.padding(start = 2.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -252,38 +257,37 @@ private fun ContinueCard(g: Game, onClick: (app.materialnonogram.ui.play.Intro) 
 
 fun timeLabel(ms: Long): String { val s = ms / 1000; return "${s / 60}:${(s % 60).toString().padStart(2, '0')}" }
 
-/** The obscured board (board 7): Play's surface as plate, each tile its digit's ink role, no digits. */
+/** The Continue thumbnail's geometry: cells sized so any board fits a 172 dp square, block gutters every five. */
+class ThumbGeo(val cell: Dp, val gap: Dp, val gut: Dp, val pad: Dp, val w: Int, val h: Int) {
+    fun p(k: Int) = pad + (cell + gap) * k + (gut - gap) * (k / 5)
+    val width: Dp get() = p(w - 1) + cell + pad
+    val height: Dp get() = p(h - 1) + cell + pad
+}
+
+fun thumbGeo(g: Game, box: Dp = 172.dp): ThumbGeo {
+    val n = maxOf(g.w, g.h)
+    val blocks = (n - 1) / 5
+    val pad = 8.dp
+    // n·c + (n−1)·0.08c + blocks·0.22c = box − 2·pad
+    val c = (box - pad * 2) / (n + (n - 1) * 0.08f + blocks * 0.22f)
+    return ThumbGeo(c, c * 0.08f, c * 0.3f, pad, g.w, g.h)
+}
+
+/** The board as it stands: Play's wells and fills, small, on the page colour. */
 @Composable
-fun Thumb(g: Game, cell: Dp, gap: Dp, gut: Dp, pad: Dp, radius: Dp, selectedShown: Boolean = true, modifier: Modifier = Modifier) {
+fun Thumb(g: Game, t: ThumbGeo, radius: Dp, modifier: Modifier = Modifier) {
     val cs = MaterialTheme.colorScheme
-    val size = pad * 2 + cell * 9 + gap * 6 + gut * 2
-    val path = remember { Path() }
-    Canvas(modifier.size(size)) {
+    Canvas(modifier.size(t.width, t.height)) {
         drawRoundRect(cs.surface, cornerRadius = CornerRadius(radius.toPx()))
-        val c = cell.toPx(); val gp = gap.toPx(); val gt = gut.toPx(); val pd = pad.toPx()
-        fun p(k: Int) = pd + k * (c + gp) + (k / 3) * (gt - gp)
-        for (i in 0 until 81) {
-            if (selectedShown && i == g.selected) continue
-            val color = when {
-                g.isGiven(i) -> cs.onSurfaceVariant
-                g.values[i] != 0 -> cs.tertiary
+        val c = t.cell.toPx()
+        val b = g.board
+        for (i in 0 until g.w * g.h) {
+            val color = when (b[i]) {
+                Mark.FILLED -> cs.tertiary
+                Mark.CROSSED -> lerp(cs.surfaceContainerHighest, cs.onSurfaceVariant, 0.25f)
                 else -> cs.surfaceContainerHighest
             }
-            drawRoundRect(color, Offset(p(Geo.col(i)), p(Geo.row(i))), Size(c, c), CornerRadius(c * 0.18f))
-            if (g.values[i] == 0 && g.notes[i] != 0) {
-                // A noted cell shows a faint 3×3 of dots: its notes, unread.
-                for (k in 0 until 9) if ((g.notes[i] shr (k + 1)) and 1 == 1) drawCircle(
-                    cs.onSurfaceVariant, c * 0.05f,
-                    Offset(p(Geo.col(i)) + c * (k % 3 + 0.5f) / 3f, p(Geo.row(i)) + c * (k / 3 + 0.5f) / 3f),
-                )
-            }
-        }
-        if (selectedShown && g.selected >= 0) {
-            val s = c * 1.5f
-            val i = g.selected
-            morphPath(Morphs.of(Shp.selected, Shp.selected), 0f, Size(s, s), path)
-            path.translate(Offset(p(Geo.col(i)) - (s - c) / 2, p(Geo.row(i)) - (s - c) / 2 - 1f))
-            drawPath(path, cs.tertiaryContainer)
+            drawRoundRect(color, Offset(t.p(i % g.w).toPx(), t.p(i / g.w).toPx()), Size(c, c), CornerRadius(c * 0.12f))
         }
     }
 }
@@ -298,7 +302,7 @@ private fun corners(k: Int, n: Int, outer: Dp, inner: Dp): RoundedCornerShape {
 }
 
 @Composable
-private fun DifficultyTiles(enabled: List<Int>, sel: Int, onPick: (Int) -> Unit) {
+private fun DifficultyTiles(enabled: List<Int>, sel: Int, size: PSize, onPick: (Int) -> Unit) {
     var tip by remember { mutableIntStateOf(-1) }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         enabled.chunked(3).forEachIndexed { r, row ->
@@ -307,9 +311,10 @@ private fun DifficultyTiles(enabled: List<Int>, sel: Int, onPick: (Int) -> Unit)
                     val idx = r * 3 + c
                     Box(Modifier.weight(1f)) {
                         PickTile(
-                            on = k == sel, height = 92.dp, rest = corners(idx, enabled.size, 28.dp, 8.dp), full = 46.dp,
+                            on = k == sel, height = if (enabled.size > 3) 72.dp else 92.dp, rest = corners(idx, enabled.size, 28.dp, 8.dp), full = 46.dp,
                             onClick = { onPick(k) }, onLongPress = { tip = k },
-                            label = DIFFICULTY_NAMES[k], shape = Shp.difficulty[k],
+                            label = TIER_NAMES[k], shape = Shp.difficulty[k], compact = enabled.size > 3,
+                            greyed = !Generator.isOffered(size, Tier.entries[k]),
                         )
                         if (tip == k) TechTip(k) { tip = -1 }
                     }
@@ -330,7 +335,7 @@ private fun TechTip(k: Int, onDismiss: () -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     ShapeGlyph(Shp.difficulty[k], 16.dp, cs.onSurfaceVariant)
                     Spacer(Modifier.width(8.dp))
-                    Text(DIFFICULTY_NAMES[k], color = cs.onSurface, style = TextStyle(fontFamily = flex(14f, 600), fontSize = 14.sp))
+                    Text(TIER_NAMES[k], color = cs.onSurface, style = TextStyle(fontFamily = flex(14f, 600), fontSize = 14.sp))
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(DIFFICULTY_TECH[k], style = MaterialTheme.typography.bodyMedium)
@@ -339,14 +344,26 @@ private fun TechTip(k: Int, onDismiss: () -> Unit) {
     }
 }
 
+/** D7: one row of the enabled sizes, never two; each tile draws its grid outline to scale. */
 @Composable
-private fun LengthTiles(sel: Int, onPick: (Int) -> Unit) {
+private fun SizeTiles(sizes: List<PSize>, sel: PSize, tier: Tier, onPick: (PSize) -> Unit) {
+    val six = sizes.size >= 6
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        for (k in 0..2) Box(Modifier.weight(1f)) {
-            PickTile(on = k == sel, height = 56.dp, rest = corners(k, 3, 24.dp, 8.dp), full = 28.dp, onClick = { onPick(k) }, label = LENGTH_NAMES[k])
+        sizes.forEachIndexed { k, s ->
+            Box(Modifier.weight(1f)) {
+                PickTile(
+                    on = s == sel, height = 72.dp, rest = rowCorners(k, sizes.size, 24.dp, 8.dp), full = 36.dp,
+                    onClick = { onPick(s) }, label = s.label, grid = s, gridK = if (six) 1.5f else 1.6f, compact = true,
+                    labelSize = if (six) 13f else 14f, labelWdth = if (six) 80 else 90,
+                    greyed = !Generator.isOffered(s, tier),
+                )
+            }
         }
     }
 }
+
+private fun rowCorners(k: Int, n: Int, outer: Dp, inner: Dp) =
+    RoundedCornerShape(if (k == 0) outer else inner, if (k == n - 1) outer else inner, if (k == n - 1) outer else inner, if (k == 0) outer else inner)
 
 /**
  * ToggleButton with connected → CornerFull shapes [M3E-NEW]; selectableGroup + Role.RadioButton by
@@ -356,6 +373,8 @@ private fun LengthTiles(sel: Int, onPick: (Int) -> Unit) {
 private fun PickTile(
     on: Boolean, height: Dp, rest: RoundedCornerShape, full: Dp, onClick: () -> Unit, label: String,
     shape: RoundedPolygon? = null, onLongPress: (() -> Unit)? = null,
+    grid: PSize? = null, gridK: Float = 1.6f, compact: Boolean = false, labelSize: Float = 16f, labelWdth: Int = 100,
+    greyed: Boolean = false,
 ) {
     val cs = MaterialTheme.colorScheme
     val springs = LocalSprings.current
@@ -368,12 +387,12 @@ private fun PickTile(
     val density = androidx.compose.ui.platform.LocalDensity.current
     Box(
         Modifier.fillMaxWidth().height(height)
-            .graphicsLayer { val s = 1f - 0.05f * p; scaleX = s; scaleY = s }
-            .semantics { role = Role.RadioButton; selected = on; contentDescription = label }
-            .pointerInput(onLongPress) {
+            .graphicsLayer { val s = 1f - 0.05f * p; scaleX = s; scaleY = s; alpha = if (greyed) 0.38f else 1f }
+            .semantics { role = Role.RadioButton; selected = on; contentDescription = if (greyed) "$label, not available" else label }
+            .pointerInput(onLongPress, greyed) {
                 detectTapGestures(
-                    onPress = { pressed = true; tryAwaitRelease(); pressed = false },
-                    onTap = { onClick() },
+                    onPress = { if (!greyed) { pressed = true; tryAwaitRelease(); pressed = false } },
+                    onTap = { if (!greyed) onClick() },
                     onLongPress = onLongPress?.let { f -> { _: Offset -> f() } },
                 )
             }
@@ -394,14 +413,17 @@ private fun PickTile(
                     ),
                 )
                 drawPath(path, bg)
+                // Greyed both ways (D7): a slash across the tile.
+                if (greyed) drawLine(lerp(cs.onSurface, bg, 0.3f), Offset(sz.width * 0.2f, sz.height * 0.8f), Offset(sz.width * 0.8f, sz.height * 0.2f), 2.dp.toPx())
             },
         contentAlignment = Alignment.Center,
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (shape != null) ShapeGlyph(shape, 34.dp, lerp(cs.onSurfaceVariant, cs.onSecondary, c), Modifier.graphicsLayer {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 8.dp)) {
+            if (shape != null) ShapeGlyph(shape, if (compact) 28.dp else 34.dp, lerp(cs.onSurfaceVariant, cs.onSecondary, c), Modifier.graphicsLayer {
                 val s = 1f + 0.16f * t; scaleX = s; scaleY = s; rotationZ = -12f * t
             })
-            Text(label, color = fg, style = TextStyle(fontFamily = flex(16f, if (on) 720 else 560), fontSize = 16.sp, lineHeight = 20.sp))
+            if (grid != null) GridGlyph(grid, gridK, lerp(cs.onSurfaceVariant, cs.onSecondary, c))
+            Text(label, color = fg, maxLines = 1, style = TextStyle(fontFamily = flex(labelSize, if (on) 720 else 560, wdth = labelWdth), fontSize = labelSize.sp, lineHeight = (labelSize + 4).sp, fontFeatureSettings = "tnum"))
         }
     }
 }
@@ -411,7 +433,7 @@ private fun PickTile(
  * MaterialShape. With a game running it steps back (0.84×, secondaryContainer, "New game").
  */
 @Composable
-private fun BigStart(d: Int, l: Int, inProgress: Boolean, starting: Boolean, size: Dp, onGo: (androidx.compose.ui.geometry.Rect) -> Unit) {
+private fun BigStart(d: Int, sz: PSize, inProgress: Boolean, starting: Boolean, size: Dp, onGo: (androidx.compose.ui.geometry.Rect) -> Unit) {
     var shapeRect by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     val cs = MaterialTheme.colorScheme
     val springs = LocalSprings.current
@@ -432,7 +454,7 @@ private fun BigStart(d: Int, l: Int, inProgress: Boolean, starting: Boolean, siz
     val echoSpin by animateFloatAsState(echoTurn, springs.slow(), label = "eturn")
     val run by animateFloatAsState(if (inProgress) 1f else 0f, springs.slow(), label = "run")
     val runC by animateFloatAsState(if (inProgress) 1f else 0f, springs.effects(), label = "runC")
-    val lenScale by animateFloatAsState(listOf(0.94f, 1f, 1.05f)[l], springs.slow(), label = "len")
+    val lenScale = 1f
     var pressed by remember { mutableStateOf(false) }
     val p by animateFloatAsState(if (pressed) 1f else 0f, springs.fast(), label = "p")
     val go = remember { Animatable(0f) }
@@ -445,7 +467,7 @@ private fun BigStart(d: Int, l: Int, inProgress: Boolean, starting: Boolean, siz
             Modifier.size(size)
                 .graphicsLayer { val s = lenScale * (1f - 0.16f * run); scaleX = s; scaleY = s }
                 .onGloballyPositioned { shapeRect = it.boundsInRoot() }
-                .semantics { role = Role.Button; contentDescription = (if (inProgress) "New game, " else "Start, ") + "${DIFFICULTY_NAMES[d]}, ${LENGTH_NAMES[l]}" }
+                .semantics { role = Role.Button; contentDescription = (if (inProgress) "New game, " else "Start, ") + "${TIER_NAMES[d]}, ${sz.w} by ${sz.h}" }
                 .pointerInput(inProgress, starting) {
                     detectTapGestures(
                         onPress = { pressed = true; tryAwaitRelease(); pressed = false },
@@ -487,14 +509,26 @@ private fun BigStart(d: Int, l: Int, inProgress: Boolean, starting: Boolean, siz
             Column(Modifier.graphicsLayer { alpha = 1f - runC; val q = (1f - 0.1f * runC) * k; scaleX = q; scaleY = q }, horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Sym["play_fill"], null, Modifier.size(36.dp), tint = cs.onPrimary)
                 Text(if (starting && !inProgress) "Starting" else "Start", color = cs.onPrimary, style = TextStyle(fontFamily = flex(30f, 680), fontSize = 30.sp, lineHeight = 34.sp))
-                Text("${DIFFICULTY_NAMES[d]} · ${LENGTH_NAMES[l]}", color = cs.onPrimary.copy(alpha = 0.85f), style = TextStyle(fontFamily = flex(15f, 480), fontSize = 15.sp, lineHeight = 20.sp))
+                Text("${TIER_NAMES[d]} · ${sz.label}", color = cs.onPrimary.copy(alpha = 0.85f), style = TextStyle(fontFamily = flex(15f, 480), fontSize = 15.sp, lineHeight = 20.sp))
             }
             Column(Modifier.graphicsLayer { alpha = runC; val q = (0.9f + 0.1f * runC) * k; scaleX = q; scaleY = q }, horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Sym["add"], null, Modifier.size(32.dp), tint = cs.onSecondaryContainer)
                 Text(if (starting) "Starting" else "New game", color = cs.onSecondaryContainer, style = TextStyle(fontFamily = flex(28f, 680), fontSize = 28.sp, lineHeight = 34.sp))
-                Text("${DIFFICULTY_NAMES[d]} · ${LENGTH_NAMES[l]}", color = cs.onSecondaryContainer.copy(alpha = 0.85f), style = TextStyle(fontFamily = flex(15f, 480), fontSize = 15.sp, lineHeight = 20.sp))
+                Text("${TIER_NAMES[d]} · ${sz.label}", color = cs.onSecondaryContainer.copy(alpha = 0.85f), style = TextStyle(fontFamily = flex(15f, 480), fontSize = 15.sp, lineHeight = 20.sp))
             }
         }
+    }
+}
+
+/** A size's grid outline to scale ([k] dp a cell), with block lines every five. */
+@Composable
+private fun GridGlyph(s: PSize, k: Float, color: Color) {
+    Canvas(Modifier.size((s.w * k).dp, (s.h * k).dp)) {
+        val c = k.dp.toPx()
+        val sw = 1.dp.toPx()
+        drawRoundRect(color, Offset(sw / 2, sw / 2), Size(size.width - sw, size.height - sw), CornerRadius(2.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(sw * 1.3f))
+        for (x in 5 until s.w step 5) drawLine(color.copy(alpha = 0.6f), Offset(x * c, 0f), Offset(x * c, size.height), sw * 0.8f)
+        for (y in 5 until s.h step 5) drawLine(color.copy(alpha = 0.6f), Offset(0f, y * c), Offset(size.width, y * c), sw * 0.8f)
     }
 }
 

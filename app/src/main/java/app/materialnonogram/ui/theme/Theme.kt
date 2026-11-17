@@ -23,7 +23,7 @@ enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
 /** Wallpaper colour (null seed) or one of the four fixed seeds; light/dark; optional AMOLED black. */
 @Composable
-fun SudokuTheme(
+fun NonogramTheme(
     mode: ThemeMode = ThemeMode.SYSTEM,
     seed: Seed? = null,
     amoled: Boolean = false,
@@ -55,7 +55,7 @@ fun SudokuTheme(
         MaterialExpressiveTheme(
             colorScheme = scheme,
             motionScheme = MotionScheme.expressive(),
-            typography = remember { sudokuTypography() },
+            typography = remember { nonogramTypography() },
             content = content,
         )
     }

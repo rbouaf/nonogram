@@ -27,10 +27,13 @@ class NonoStore(private val dir: File) {
 
     init { dir.mkdirs() }
 
-    fun save(g: Game) {
-        val f = File(dir, "${g.id}.json")
-        val tmp = File(dir, "${g.id}.json.tmp")
-        tmp.writeText(NonoJson.encode(g))
+    fun save(g: Game) = write(g.id, NonoJson.encode(g))
+
+    /** Writes an already encoded game (encode on the thread that mutates the game, write anywhere). */
+    fun write(id: String, json: String) {
+        val f = File(dir, "$id.json")
+        val tmp = File(dir, "$id.json.tmp")
+        tmp.writeText(json)
         if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f) }
     }
 

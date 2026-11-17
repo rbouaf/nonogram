@@ -47,14 +47,14 @@ import androidx.compose.ui.unit.dp
 import app.materialnonogram.AppModel
 import app.materialnonogram.Screen
 import app.materialnonogram.data.Settings
-import app.materialnonogram.legacy.game.Ev
-import app.materialnonogram.legacy.game.Game
-import app.materialnonogram.legacy.game.NET_NAMES
-import app.materialnonogram.legacy.game.BAND_NAMES
-import app.materialnonogram.legacy.game.Status
-import app.materialnonogram.legacy.game.clock
-import app.materialnonogram.legacy.game.clockMs
-import app.materialnonogram.legacy.game.net
+import app.materialnonogram.game.Ev
+import app.materialnonogram.game.Game
+import app.materialnonogram.game.NET_NAMES
+import app.materialnonogram.game.BAND_NAMES
+import app.materialnonogram.game.Status
+import app.materialnonogram.game.clock
+import app.materialnonogram.game.clockMs
+import app.materialnonogram.game.net
 import app.materialnonogram.ui.kit.LocalBuzz
 import app.materialnonogram.ui.kit.Morphs
 import app.materialnonogram.ui.kit.SectionHead
@@ -64,7 +64,7 @@ import app.materialnonogram.ui.kit.SquishIcon
 import app.materialnonogram.ui.kit.Sym
 import app.materialnonogram.ui.kit.drawShape
 import app.materialnonogram.ui.kit.ts
-import app.materialnonogram.ui.play.DIFFICULTY_NAMES
+import app.materialnonogram.ui.play.TIER_NAMES
 import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
@@ -87,10 +87,10 @@ fun StatsScreen(model: AppModel, settings: Settings) {
     var netF by remember { mutableIntStateOf(-1) }
     var aidF by remember { mutableIntStateOf(-1) }
     val games = all.filter { g ->
-        (diff < 0 || g.deal.difficulty == diff) && (netF < 0 || g.net() == netF) && (aidF < 0 || (if (aidF == 2) g.assisted else !g.assisted && g.band == aidF))
+        (diff < 0 || g.deal.tier.ordinal == diff) && (netF < 0 || g.net() == netF) && (aidF < 0 || (if (aidF == 2) g.assisted else !g.assisted && g.band == aidF))
     }
     val won = games.filter { it.status == Status.WON }
-    val played = all.map { it.deal.difficulty }.distinct().sorted()
+    val played = all.map { it.deal.tier.ordinal }.distinct().sorted()
 
     Column(Modifier.fillMaxSize().systemBarsPadding()) {
         Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -111,7 +111,7 @@ fun StatsScreen(model: AppModel, settings: Settings) {
                     ) {
                         Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                             if (d < 0) Text("All", style = ts(14f, 620))
-                            else { ShapeGlyph(Shp.difficulty[d], 16.dp, if (on) cs.onSecondaryContainer else cs.onSurfaceVariant); if (on) { Spacer(Modifier.width(6.dp)); Text(DIFFICULTY_NAMES[d], style = ts(14f, 620), maxLines = 1) } }
+                            else { ShapeGlyph(Shp.difficulty[d], 16.dp, if (on) cs.onSecondaryContainer else cs.onSurfaceVariant); if (on) { Spacer(Modifier.width(6.dp)); Text(TIER_NAMES[d], style = ts(14f, 620), maxLines = 1) } }
                         }
                     }
                 }
@@ -130,7 +130,7 @@ fun StatsScreen(model: AppModel, settings: Settings) {
             }
             Activity(all)
             Spacer(Modifier.height(14.dp))
-            SectionHead("Personal bests", "per difficulty, length and net", Modifier.padding(horizontal = 14.dp))
+            SectionHead("Personal bests", "per difficulty, size and net", Modifier.padding(horizontal = 14.dp))
             Bests(won)
             Spacer(Modifier.height(14.dp))
             SectionHead("History", "${won.size} solves · shape = difficulty", Modifier.padding(horizontal = 14.dp))
@@ -234,7 +234,7 @@ private fun Activity(all: List<Game>) {
 @Composable
 private fun Bests(won: List<Game>) {
     val cs = MaterialTheme.colorScheme
-    val groups = won.groupBy { Triple(it.deal.difficulty, it.deal.length, it.net()) }.entries.sortedWith(compareBy({ it.key.first }, { it.key.second }, { it.key.third }))
+    val groups = won.groupBy { Triple(it.deal.tier.ordinal, it.w * 100 + it.h, it.net()) }.entries.sortedWith(compareBy({ it.key.first }, { it.key.second }, { it.key.third }))
     if (groups.isEmpty()) { Text("No wins yet.", Modifier.padding(horizontal = 20.dp), color = cs.onSurfaceVariant); return }
     val weekAgo = System.currentTimeMillis() - 7 * 86_400_000L
     Column(Modifier.padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -251,7 +251,7 @@ private fun Bests(won: List<Game>) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 ShapeGlyph(Shp.difficulty[k.first], 18.dp, if (recent) cs.onTertiaryContainer else cs.secondary)
                                 Spacer(Modifier.width(6.dp))
-                                Text("${DIFFICULTY_NAMES[k.first]} · ${listOf("Quick", "Normal", "Long")[k.second]}" + if (k.third == 0) "" else " · ${NET_NAMES[k.third]}", Modifier.weight(1f), style = ts(12f, 620, sub), maxLines = 1)
+                                Text("${TIER_NAMES[k.first]} · ${k.second / 100}×${k.second % 100}" + if (k.third == 0) "" else " · ${NET_NAMES[k.third]}", Modifier.weight(1f), style = ts(12f, 620, sub), maxLines = 1)
                                 Spark(last10.map { it.elapsed }, best.elapsed, if (recent) cs.onTertiaryContainer else cs.tertiary, sub.copy(alpha = 0.35f))
                             }
                             val (mm, frac) = clockMs(best.elapsed)
@@ -307,10 +307,10 @@ private fun History(won: List<Game>) {
                     }
                 }
                 // Stepped best per difficulty.
-                xs.map { it.deal.difficulty }.distinct().forEach { d ->
+                xs.map { it.deal.tier.ordinal }.distinct().forEach { d ->
                     var best = Long.MAX_VALUE
                     val p = Path(); var started = false
-                    xs.forEachIndexed { i, g -> if (g.deal.difficulty == d && g.elapsed < best) {
+                    xs.forEachIndexed { i, g -> if (g.deal.tier.ordinal == d && g.elapsed < best) {
                         if (started) p.lineTo(x(i), y(best)) else { p.moveTo(x(i), y(g.elapsed)); started = true }
                         best = g.elapsed; p.lineTo(x(i), y(best))
                     } }
@@ -328,7 +328,7 @@ private fun History(won: List<Game>) {
                 }
                 xs.forEachIndexed { i, g ->
                     val s = 9.dp.toPx()
-                    drawShape(Morphs.of(Shp.difficulty[g.deal.difficulty], Shp.difficulty[g.deal.difficulty]), 0f, cs.onSurfaceVariant.copy(alpha = 0.55f), Size(s, s), Offset(x(i) - s / 2, y(g.elapsed) - s / 2), path)
+                    drawShape(Morphs.of(Shp.difficulty[g.deal.tier.ordinal], Shp.difficulty[g.deal.tier.ordinal]), 0f, cs.onSurfaceVariant.copy(alpha = 0.55f), Size(s, s), Offset(x(i) - s / 2, y(g.elapsed) - s / 2), path)
                 }
             }
             Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -397,14 +397,14 @@ private fun Totals(games: List<Game>, current: Game?) {
     val won = games.count { it.status == Status.WON }
     val lost = games.count { it.status == Status.LOST }
     val abandoned = games.count { it.status == Status.PLAYING && it.id != current?.id }
-    val cells = games.sumOf { g -> g.events.count { it.kind == Ev.PLACE || it.kind == Ev.AUTO } }
+    val cells = games.sumOf { g -> g.events.count { it.kind == Ev.MARK } }
     val strikes = games.sumOf { it.mistakes }
     val hints = games.sumOf { g -> g.events.count { it.kind == Ev.HINT } }
     val n = games.size.coerceAtLeast(1)
     val tiles = listOf(
         "${games.size}" to "started", "$won" to "won · ${100 * won / n}%", "$lost" to "lost",
-        hm(games.sumOf { it.elapsed }) to "solving", "$cells" to "cells placed", "%.2f".format(abandoned.toDouble() / won.coerceAtLeast(1)) to "abandons / win",
-        "%.2f".format(strikes.toDouble() / n) to "strikes / game", "$hints" to "hints", "${games.count { it.deal.famous != null }}" to "famous puzzles",
+        hm(games.sumOf { it.elapsed }) to "solving", "$cells" to "marks made", "%.2f".format(abandoned.toDouble() / won.coerceAtLeast(1)) to "abandons / win",
+        "%.2f".format(strikes.toDouble() / n) to "strikes / game", "$hints" to "hints", "${games.sumOf { it.w * it.h }}" to "cells in all",
     )
     val cs = MaterialTheme.colorScheme
     Column(Modifier.padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

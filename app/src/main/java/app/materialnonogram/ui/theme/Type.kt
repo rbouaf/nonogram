@@ -51,7 +51,7 @@ fun flexStyle(size: Float, lineHeight: Float, weight: Int, tracking: Float = 0f,
     )
 
 /** Typography().copy(…) is the safe way to set all 30 styles: the no-argument constructor leaves the emphasized set equal to the plain one. */
-fun sudokuTypography(): Typography = Typography().copy(
+fun nonogramTypography(): Typography = Typography().copy(
     displayLarge = flexStyle(57f, 64f, 400),
     displayMedium = flexStyle(45f, 52f, 400),
     displaySmall = flexStyle(36f, 44f, 400),

@@ -35,7 +35,7 @@ import app.materialnonogram.ui.play.PlayScreen
 import app.materialnonogram.ui.results.ResultsScreen
 import app.materialnonogram.ui.settings.SettingsScreen
 import app.materialnonogram.ui.stats.StatsScreen
-import app.materialnonogram.ui.theme.SudokuTheme
+import app.materialnonogram.ui.theme.NonogramTheme
 
 class MainActivity : ComponentActivity() {
     private val model: AppModel by viewModels()
@@ -50,7 +50,7 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(s.kanjiName) { app.materialnonogram.data.LauncherName.apply(applicationContext, s.kanjiName) }
             val reduced = when (s.motion) { Motion.SYSTEM -> systemReduced; Motion.REDUCED -> true; Motion.FULL -> false }
             val springs = remember(reduced) { Springs(reduced) }
-            SudokuTheme(mode = s.theme, seed = s.seed, amoled = s.amoled) {
+            NonogramTheme(mode = s.theme, seed = s.seed, amoled = s.amoled) {
                 CompositionLocalProvider(LocalBuzz provides buzz, LocalSprings provides springs) {
                     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                         BackHandler(model.screen != Screen.HOME) {
@@ -81,11 +81,12 @@ class MainActivity : ComponentActivity() {
                                         onSettings = { model.openSettings(Screen.PLAY) },
                                         onHint = model::hint,
                                         onFinished = model::onFinished,
-                                        halfwayLine = { shown -> app.materialnonogram.legacy.game.halfwayLine(g, model.history, shown) },
+                                        halfwayLine = { shown -> app.materialnonogram.game.halfwayLine(g, model.history, shown) },
                                         introActive = model.intro != null,
                                         revealed = model.revealed,
                                         introKind = when (model.intro) { is app.materialnonogram.ui.play.Intro.Continue -> 1; else -> 0 },
                                         onBoardGeo = { model.boardGeo = it },
+                                        thinking = model.thinking,
                                     )
                                 }
                                 Screen.RESULTS -> ResultsScreen(model, s)
@@ -103,5 +104,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Leaving the app pauses the game and writes it now, not after the autosave's debounce.
+        model.onStop()
     }
 }

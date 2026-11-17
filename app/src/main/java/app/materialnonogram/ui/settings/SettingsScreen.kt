@@ -65,11 +65,8 @@ import androidx.compose.material3.MaterialShapes
 import app.materialnonogram.AppModel
 import app.materialnonogram.BuildConfig
 import app.materialnonogram.data.Haptics
-import app.materialnonogram.data.Input
 import app.materialnonogram.data.Motion
 import app.materialnonogram.data.Settings
-import app.materialnonogram.legacy.game.BAND_NAMES
-import app.materialnonogram.legacy.game.Geo
 import app.materialnonogram.ui.home.DIFFICULTY_TECH
 import app.materialnonogram.ui.kit.LocalBuzz
 import app.materialnonogram.ui.kit.LocalSprings
@@ -80,7 +77,9 @@ import app.materialnonogram.ui.kit.SquishIcon
 import app.materialnonogram.ui.kit.Sym
 import app.materialnonogram.ui.kit.drawShape
 import app.materialnonogram.ui.kit.ts
-import app.materialnonogram.ui.play.DIFFICULTY_NAMES
+import app.materialnonogram.ui.play.TIER_NAMES
+import app.materialnonogram.engine.Size as PSize
+import app.materialnonogram.engine.Tier
 import app.materialnonogram.ui.theme.Seed
 import app.materialnonogram.ui.theme.ThemeMode
 import kotlinx.coroutines.launch
@@ -111,16 +110,19 @@ fun SettingsScreen(model: AppModel, s: Settings) {
             Text("Settings", Modifier.padding(start = 20.dp, top = 4.dp, bottom = 12.dp), style = ts(45f, 500, cs.onSurface))
 
             Section("Difficulties on Home")
-            Pad { DifficultyChecks(s) { k -> set { it.copy(difficulties = it.difficulties xor (1 shl k)) } } }
-            Pad(top = 4.dp) { ImpossibleTile(s.impossible) { on -> set { it.copy(impossible = on) } } }
-            Info("info", "Tap one to show or hide it on Home. Hold one to see the techniques it needs.")
+            Pad { Checks(TIER_NAMES, { s.tierOn(Tier.entries[it]) }, shape = { Shp.difficulty[it] }) { k -> set { it.copy(tiers = it.tiers xor (1 shl k)) } } }
+            Info("info", "Tap one to show or hide it on Home. Expert needs looking ahead; Master needs it often, and exists from 15×15 up.")
+
+            Section("Sizes on Home")
+            Pad { Checks(PSize.entries.map { it.label }, { s.sizeOn(PSize.entries[it]) }, grid = { PSize.entries[it] }) { k -> set { it.copy(sizes = it.sizes xor (1 shl k)) } } }
+            Info("info", "20×20 opens zoomed in: pinch to zoom, two fingers to move, one finger always draws.")
 
             Section("Mistakes")
             Pad {
                 TileRow(
                     listOf(
-                        Choice("Flag them", "A wrong number turns red at once and costs a life", heartsIcon = true),
-                        Choice("Don’t flag them", "Wrong numbers stay until you spot them. No lives", icon = "shield"),
+                        Choice("Flag them", "A wrong mark is refused at once and costs a life", heartsIcon = true),
+                        Choice("Don’t flag them", "Wrong marks stay until you spot them. No lives", icon = "shield"),
                     ),
                     if (s.flagMistakes) 0 else 1, height = 112.dp,
                 ) { k -> set { it.copy(flagMistakes = k == 0) } }
@@ -134,47 +136,27 @@ fun SettingsScreen(model: AppModel, s: Settings) {
             }
             Info(
                 "lock",
-                (if (s.flagMistakes) "Lose your last life and the game is over. " else "With mistakes unflagged, a wrong number can make the puzzle unsolvable. ") +
+                (if (s.flagMistakes) "A wrong fill or a wrong cross both count. Lose your last life and the game is over. " else "With mistakes unflagged, a wrong mark can make the puzzle unsolvable. ") +
                     if (inGame != null) "The game you’re in the middle of keeps its old rules." else "",
             )
 
             Section("Help while you play")
-            BandCard(s)
-            Spacer(Modifier.height(8.dp))
-            HighlightCard(s.highlight) { v -> set { it.copy(highlight = v) } }
-            Spacer(Modifier.height(8.dp))
             Group {
-                SwitchRow("apps", "Fill-in-notes button", "Adds a button that writes every possible number into every empty cell. Using it counts like a hint", s.fillNotesButton) { v -> set { it.copy(fillNotesButton = v) } }
-                SwitchRow("edit", "Only possible notes", "A note that its row, column or box already rules out is refused. Doesn't count as help", s.blockImpossibleNotes) { v -> set { it.copy(blockImpossibleNotes = v) } }
-                SwitchRow("ink_eraser", "Tidy notes automatically", "Place a 5 and any 5s in your notes in the same row, column and box are erased", s.autoRemoveNotes) { v -> set { it.copy(autoRemoveNotes = v) } }
-                GroupRow {
-                    Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Lead("done_all"); Spacer(Modifier.width(14.dp))
-                            Column { Text("Finish the easy end", style = MaterialTheme.typography.bodyLarge, color = cs.onSurface); Text("Once every empty cell has only one number that fits, fill them all in", style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant) }
-                        }
-                        Segmented(listOf("Show a button", "Do it for me"), if (s.autoCompleteAuto) 1 else 0) { k -> set { it.copy(autoCompleteAuto = k == 1) } }
-                    }
+                SwitchRow("close", "Cross off finished lines", "When a row or column matches its clue, its other cells get crosses. Counts as some help", s.autoCross) { v -> set { it.copy(autoCross = v) } }
+                Box(Modifier.graphicsLayer { alpha = if (s.flagMistakes) 0.38f else 1f }) {
+                    SwitchRow("flag", "Flag a broken clue", "Mistakes unflagged only: a clue turns red when the finished runs in its line can't fit it", s.contradictionFlag && !s.flagMistakes) { v -> if (!s.flagMistakes) set { it.copy(contradictionFlag = v) } }
                 }
-                SwitchRow("lightbulb", "Hints", "A hint button in Play. Each tap tells you more: where to look, the technique, the cell, then the answer", s.hints) { v -> set { it.copy(hints = v) } }
-                SwitchRow("flag", "Point out an easy cell", "Always marks one cell you can solve right now. Counts as a hint", s.easyCellMarker) { v -> set { it.copy(easyCellMarker = v) } }
+                Box(Modifier.graphicsLayer { alpha = if (s.flagMistakes) 0.38f else 1f }) {
+                    SwitchRow("fact_check", "Check button", "Mistakes unflagged only: asks whether any mark on the board is wrong. Using it counts like a hint", s.checkButton && !s.flagMistakes) { v -> if (!s.flagMistakes) set { it.copy(checkButton = v) } }
+                }
+                SwitchRow("lightbulb", "Hints", "A hint button in Play. Each tap tells you more: which line, which cell, why; then it places it", s.hints) { v -> set { it.copy(hints = v) } }
             }
 
-            Section("Entering numbers")
-            Pad {
-                TileRow(
-                    listOf(
-                        Choice("Cell first", "Tap a cell, then a number"),
-                        Choice("Number first", "Tap a number, then every cell it goes in"),
-                        Choice("Notes first", "Tap a number to note it, hold to place it"),
-                    ),
-                    s.input.ordinal, height = 118.dp,
-                ) { k -> set { it.copy(input = Input.entries[k]) } }
-            }
-            Spacer(Modifier.height(8.dp))
+            Section("Marking cells")
             Group {
+                SwitchRow("touch_app", "Hold for the other tool", "Rest your finger on a cell and the stroke switches from Fill to Cross, or back", s.longPress) { v -> set { it.copy(longPress = v) } }
                 SwitchRow("timer", "Show the timer", "You can also tap it during a game to hide it. Your time is recorded either way", s.showTimer) { v -> set { it.copy(showTimer = v) } }
-                SwitchRow("flag", "Halfway message", "Once a game, when half the empty cells are filled: your pace if you're ahead, otherwise a word of encouragement", s.halfwayMessage) { v -> set { it.copy(halfwayMessage = v) } }
+                SwitchRow("flag", "Halfway message", "Once a game, when half the cells are marked: your pace if you're ahead, otherwise a word of encouragement", s.halfwayMessage) { v -> set { it.copy(halfwayMessage = v) } }
             }
 
             Section("Look")
@@ -184,8 +166,6 @@ fun SettingsScreen(model: AppModel, s: Settings) {
             Group { SwitchRow("contrast", "Pure black", "In dark theme, black instead of dark grey", s.amoled) { v -> set { it.copy(amoled = v) } } }
             Label("Colour")
             Swatches(s.seed) { seed -> buzz.toggle(); set { it.copy(seed = seed) } }
-            Label("Numbers on the board")
-            Pad { TileRow(listOf(Choice("1 2 3", "Western Arabic"), Choice("\u200E١ ٢ ٣", "Eastern Arabic")), if (s.arabicNumerals) 1 else 0, height = 76.dp) { k -> set { it.copy(arabicNumerals = k == 1) } } }
             Spacer(Modifier.height(8.dp))
             Group {
                 SwitchRow("animation", "Reduce motion", "Simple fades instead of bounces and morphs. Matches your phone until you change it", s.motion == Motion.REDUCED) { v ->
@@ -210,7 +190,7 @@ fun SettingsScreen(model: AppModel, s: Settings) {
 
             Section("About")
             Group {
-                GroupRow { RowBody("info", "Material Sudoku ${BuildConfig.VERSION_NAME}", "Puzzle maker v1 · difficulty rater v1") {} }
+                GroupRow { RowBody("info", "Material Nonogram ${BuildConfig.VERSION_NAME}", "Puzzle maker v${app.materialnonogram.engine.Generator.VERSION} · grader v${app.materialnonogram.engine.Grader.VERSION} · ${app.materialnonogram.engine.Effort.VERSION}") {} }
                 GroupRow { RowBody("license", "Open-source licences", "Google Sans Flex and Noto Sans JP (OFL 1.1), Material Symbols (Apache 2.0)", chevron = false) {} }
             }
         }
@@ -354,44 +334,52 @@ private fun Segmented(labels: List<String>, sel: Int, icons: List<String>? = nul
     }
 }
 
-/** Six difficulty tiles, multi-select with a check badge; at least one stays on (the last refuses and shakes). */
+/** Multi-select tiles with a check badge, three to a row; at least one stays on (the last refuses and shakes). */
 @Composable
-private fun DifficultyChecks(s: Settings, onToggle: (Int) -> Unit) {
+private fun Checks(labels: List<String>, isOn: (Int) -> Boolean, shape: ((Int) -> RoundedPolygon)? = null, grid: ((Int) -> PSize)? = null, onToggle: (Int) -> Unit) {
     val cs = MaterialTheme.colorScheme
     val buzz = LocalBuzz.current
     val scope = rememberCoroutineScope()
-    val shakes = remember { List(6) { Animatable(0f) } }
-    var tip by remember { mutableStateOf(-1) }
+    val shakes = remember { List(labels.size) { Animatable(0f) } }
+    val rows = (labels.size + 2) / 3
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        for (r in 0..1) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        for (r in 0 until rows) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             for (c in 0..2) {
                 val k = r * 3 + c
-                val on = s.difficultyOn(k)
-                val count = (0..5).count { s.difficultyOn(it) }
+                if (k >= labels.size) { Spacer(Modifier.weight(1f)); continue }
+                val on = isOn(k)
+                val count = labels.indices.count { isOn(it) }
                 Surface(
                     color = if (on) cs.secondaryContainer else Color.Transparent, contentColor = if (on) cs.onSecondaryContainer else cs.onSurface,
-                    shape = RoundedCornerShape(if (on) 34.dp else 8.dp).let { if (!on) RoundedCornerShape(if (k == 0) 28.dp else 8.dp, if (k == 2) 28.dp else 8.dp, if (k == 5) 28.dp else 8.dp, if (k == 3) 28.dp else 8.dp) else it },
+                    shape = RoundedCornerShape(if (on) 34.dp else 12.dp),
                     border = if (on) null else androidx.compose.foundation.BorderStroke(1.dp, cs.outlineVariant),
-                    modifier = Modifier.weight(1f).height(88.dp)
+                    modifier = Modifier.weight(1f).height(84.dp)
                         .graphicsLayer { translationX = shakes[k].value }
                         .semantics { role = Role.Checkbox; stateDescription = if (on) "Shown on Home" else "Hidden" }
                         .pointerInput(on, count) {
-                            detectTapGestures(
-                                onTap = {
-                                    if (on && count == 1) {
-                                        buzz.lowTick(0.8f)
-                                        scope.launch { for (x in listOf(-8f, 7f, -5f, 3f, 0f)) shakes[k].animateTo(x, tween(45, easing = LinearEasing)) }
-                                    } else { buzz.difficulty(k); onToggle(k) }
-                                },
-                                onLongPress = { tip = if (tip == k) -1 else k },
-                            )
+                            detectTapGestures(onTap = {
+                                if (on && count == 1) {
+                                    buzz.lowTick(0.8f)
+                                    scope.launch { for (x in listOf(-8f, 7f, -5f, 3f, 0f)) shakes[k].animateTo(x, tween(45, easing = LinearEasing)) }
+                                } else { buzz.toggle(); onToggle(k) }
+                            })
                         },
                 ) {
                     Box {
                         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                            ShapeGlyph(Shp.difficulty[k], 34.dp, if (on) cs.onSecondaryContainer else cs.onSurfaceVariant)
-                            Spacer(Modifier.height(8.dp))
-                            Text(DIFFICULTY_NAMES[k], style = ts(16f, if (on) 700 else 560))
+                            val ink = if (on) cs.onSecondaryContainer else cs.onSurfaceVariant
+                            if (shape != null) ShapeGlyph(shape(k), 30.dp, ink)
+                            if (grid != null) {
+                                val g = grid(k)
+                                Canvas(Modifier.size((g.w * 1.5f).dp, (g.h * 1.5f).dp)) {
+                                    drawRoundRect(ink, cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx()), style = Stroke(1.3.dp.toPx()))
+                                    val cc = 1.5.dp.toPx()
+                                    for (x in 5 until g.w step 5) drawLine(ink.copy(alpha = 0.6f), Offset(x * cc, 0f), Offset(x * cc, size.height), 0.8.dp.toPx())
+                                    for (y in 5 until g.h step 5) drawLine(ink.copy(alpha = 0.6f), Offset(0f, y * cc), Offset(size.width, y * cc), 0.8.dp.toPx())
+                                }
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Text(labels[k], style = ts(15f, if (on) 700 else 560, tnum = true))
                         }
                         Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(20.dp).drawBehind {
                             if (on) drawCircle(cs.onSecondaryContainer) else drawCircle(cs.outline, style = Stroke(1.5.dp.toPx()))
@@ -399,204 +387,6 @@ private fun DifficultyChecks(s: Settings, onToggle: (Int) -> Unit) {
                             if (on) Icon(Sym["check"], null, Modifier.size(14.dp), tint = cs.secondaryContainer)
                         }
                     }
-                }
-            }
-        }
-        if (tip >= 0) Text("${DIFFICULTY_NAMES[tip]}: ${DIFFICULTY_TECH[tip]}", Modifier.padding(start = 6.dp, top = 6.dp), style = ts(12.5f, 500, cs.onSurfaceVariant, lineHeight = 17f))
-    }
-}
-
-/** Impossible is guarded by a hold, not a dialog (Home's no-dialogs rule). One tap turns it off again. */
-@Composable
-private fun ImpossibleTile(on: Boolean, onChange: (Boolean) -> Unit) {
-    val cs = MaterialTheme.colorScheme
-    val buzz = LocalBuzz.current
-    val scope = rememberCoroutineScope()
-    val ring = remember { Animatable(0f) }
-    Surface(
-        color = if (on) cs.errorContainer else Color.Transparent, contentColor = if (on) cs.onErrorContainer else cs.onSurface,
-        shape = RoundedCornerShape(28.dp), border = if (on) null else androidx.compose.foundation.BorderStroke(1.dp, cs.outlineVariant),
-        modifier = Modifier.fillMaxWidth().height(72.dp).semantics { role = Role.Switch; stateDescription = if (on) "On" else "Off. Hold to unlock" },
-    ) {
-        Row(Modifier.padding(start = 14.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            ShapeGlyph(Shp.difficulty[6], 34.dp, if (on) cs.onErrorContainer else cs.onSurfaceVariant)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text("Impossible", style = ts(16f, 650))
-                Text(if (on) "On, after Extreme on Home. Tap the lock to turn it off." else "The hardest known puzzles. Hints can’t help. Hold the lock to unlock.", style = ts(12.5f, 450, lineHeight = 16f), maxLines = 2)
-            }
-            Box(
-                Modifier.size(56.dp).pointerInput(on) {
-                    detectTapGestures(
-                        onTap = { if (on) { buzz.toggle(); onChange(false) } },
-                        onPress = {
-                            if (on) return@detectTapGestures
-                            val job = scope.launch {
-                                ring.snapTo(0f); ring.animateTo(1f, tween(1200, easing = LinearEasing))
-                                buzz.heartCrack(); onChange(true)
-                            }
-                            tryAwaitRelease()
-                            if (ring.value < 1f) { job.cancel(); scope.launch { ring.animateTo(0f, tween(200)) } }
-                        },
-                    )
-                },
-                contentAlignment = Alignment.Center,
-            ) {
-                Canvas(Modifier.fillMaxSize()) {
-                    drawCircle(if (on) cs.onErrorContainer.copy(alpha = 0.12f) else cs.surfaceContainerHigh)
-                    if (ring.value > 0f && !on) drawArc(cs.error, -90f, 360f * ring.value, false, style = Stroke(3.dp.toPx()))
-                }
-                Icon(Sym[if (on) "lock_open" else "lock"], null, Modifier.size(22.dp))
-            }
-        }
-    }
-}
-
-/** Which records the current mix counts for, and why, in words. */
-@Composable
-private fun BandCard(s: Settings) {
-    val cs = MaterialTheme.colorScheme
-    val b = s.band
-    val why = if (b == 1) "Blocked highlighting does part of the scanning" else "nothing here does the thinking for you"
-    Surface(color = cs.surfaceContainerHigh, shape = RoundedCornerShape(24.dp), modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
-        Column(Modifier.padding(14.dp)) {
-            Row(Modifier.padding(start = 4.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Sym["emoji_events"], null, Modifier.size(18.dp), tint = cs.onSurface)
-                Spacer(Modifier.width(8.dp))
-                Text("Which records this counts for", style = ts(14f, 600, cs.onSurface))
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                val shapes = listOf(MaterialShapes.Square, MaterialShapes.Cookie4Sided)
-                for (k in 0..1) {
-                    val on = k == b
-                    Surface(
-                        color = if (on) cs.secondary else cs.surfaceContainerHighest, contentColor = if (on) cs.onSecondary else cs.onSurfaceVariant,
-                        shape = RoundedCornerShape(if (on || k == 0) 22.dp else 6.dp, if (on || k == 1) 22.dp else 6.dp, if (on || k == 1) 22.dp else 6.dp, if (on || k == 0) 22.dp else 6.dp),
-                        modifier = Modifier.weight(1f).height(44.dp),
-                    ) {
-                        Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                            ShapeGlyph(shapes[k], 14.dp, if (on) cs.onSecondary else cs.onSurfaceVariant)
-                            Spacer(Modifier.width(6.dp))
-                            Text(BAND_NAMES[k], style = ts(13.5f, if (on) 760 else 560), maxLines = 1)
-                        }
-                    }
-                }
-            }
-            Text(
-                "${BAND_NAMES[b]}, because $why. Best times are kept apart for each, so a game with more help never beats one with less. A game where you use a hint or fill in all notes goes to its own assisted records.",
-                Modifier.padding(start = 4.dp, end = 4.dp, top = 10.dp), style = ts(12.5f, 450, cs.onSurfaceVariant, lineHeight = 17f),
-            )
-        }
-    }
-}
-
-private val HL_NAMES = listOf("Off", "Digit", "Lines", "Notes", "Blocked")
-private val HL_CAPTIONS = listOf(
-    "Nothing lights up but the cell you selected.",
-    "Every copy of the selected number lights up.",
-    "Also the row, column and box of the selected cell.",
-    "Also that number wherever it is in your notes.",
-    "Also every empty cell where that number can’t go.",
-)
-
-/** Highlighting, shown on a small board that re-lights as the slider moves. */
-@Composable
-private fun HighlightCard(level: Int, onChange: (Int) -> Unit) {
-    val cs = MaterialTheme.colorScheme
-    val buzz = LocalBuzz.current
-    Surface(color = cs.surfaceContainer, shape = RoundedCornerShape(24.dp), modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
-        Column(Modifier.padding(start = 18.dp, end = 18.dp, top = 18.dp, bottom = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Column(Modifier.fillMaxWidth()) {
-                Text("Highlighting", style = MaterialTheme.typography.bodyLarge, color = cs.onSurface)
-                Text("What lights up when you select a cell", style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
-            }
-            Spacer(Modifier.height(14.dp))
-            SampleBoard(level, 20.dp)
-            Spacer(Modifier.height(14.dp))
-            StopSlider(level, 5) { if (it != level) { buzz.lowTick(0.5f + 0.1f * it); onChange(it) } }
-            Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
-                HL_NAMES.forEachIndexed { k, n ->
-                    Text(n, Modifier.weight(1f), style = ts(12f, if (k == level) 720 else 500, if (k == level) cs.onSurface else cs.onSurfaceVariant), textAlign = when (k) { 0 -> androidx.compose.ui.text.style.TextAlign.Start; 4 -> androidx.compose.ui.text.style.TextAlign.End; else -> androidx.compose.ui.text.style.TextAlign.Center })
-                }
-            }
-            Text(HL_CAPTIONS[level], Modifier.fillMaxWidth().padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
-        }
-    }
-}
-
-/** Slider(steps) [M3E-RESTYLED]: 16 dp track, a bar handle, stop indicators. Tap or drag. */
-@Composable
-private fun StopSlider(value: Int, n: Int, onChange: (Int) -> Unit) {
-    val cs = MaterialTheme.colorScheme
-    val springs = LocalSprings.current
-    val pos by animateFloatAsState(value.toFloat(), springs.fast(), label = "pos")
-    Canvas(
-        Modifier.fillMaxWidth().height(44.dp)
-            .pointerInput(n) {
-                fun at(x: Float) = ((x - 8.dp.toPx()) / (size.width - 16.dp.toPx()) * (n - 1)).let { kotlin.math.round(it).toInt().coerceIn(0, n - 1) }
-                detectTapGestures { onChange(at(it.x)) }
-            }
-            .pointerInput(n) {
-                fun at(x: Float) = ((x - 8.dp.toPx()) / (size.width - 16.dp.toPx()) * (n - 1)).let { kotlin.math.round(it).toInt().coerceIn(0, n - 1) }
-                detectDragGestures { ch, _ -> onChange(at(ch.position.x)) }
-            },
-    ) {
-        val h = 16.dp.toPx(); val cy = size.height / 2; val pad = 8.dp.toPx()
-        val x = pad + pos / (n - 1) * (size.width - 2 * pad)
-        val gap = 6.dp.toPx()
-        if (x - gap > 0) drawRoundRect(cs.primary, Offset(0f, cy - h / 2), Size(x - gap, h), CornerRadius(h / 2))
-        if (x + gap < size.width) drawRoundRect(cs.secondaryContainer, Offset(x + gap, cy - h / 2), Size(size.width - x - gap, h), CornerRadius(h / 2))
-        for (k in 0 until n) {
-            val sx = pad + k.toFloat() / (n - 1) * (size.width - 2 * pad)
-            if (kotlin.math.abs(sx - x) > gap) drawCircle(if (sx < x) cs.onPrimary else cs.onSecondaryContainer, 2.dp.toPx(), Offset(sx, cy))
-        }
-        drawRoundRect(cs.primary, Offset(x - 2.dp.toPx(), cy - 22.dp.toPx()), Size(4.dp.toPx(), 44.dp.toPx()), CornerRadius(2.dp.toPx()))
-    }
-}
-
-/** A fixed sample position with r5c5 selected and 3 highlighted, drawn at preview scale. */
-private const val SAMPLE = "000390002500040091000000470000400030000032000059060700000000003640007800100000900"
-private const val SAMPLE_SOL = "471398652582746391936215478218479536764532189359861724897154263643927815125683947"
-private val SAMPLE_PLACED = intArrayOf(1, 2, 7, 11, 15, 24, 31, 37, 42, 44, 48)
-
-@Composable
-private fun SampleBoard(level: Int, cell: Dp) {
-    val cs = MaterialTheme.colorScheme
-    val measurer = rememberTextMeasurer()
-    val values = remember { IntArray(81) { SAMPLE[it] - '0' }.also { v -> SAMPLE_PLACED.forEach { v[it] = SAMPLE_SOL[it] - '0' } } }
-    val sel = 40; val hd = 3
-    val gap = 1.5.dp; val gut = 5.dp
-    val total = cell * 9 + gap * 6 + gut * 2
-    Canvas(Modifier.size(total)) {
-        val c = cell.toPx(); val gp = gap.toPx(); val gt = gut.toPx()
-        fun p(k: Int) = k * (c + gp) + (k / 3) * (gt - gp)
-        val peers = Geo.peers[sel].toSet()
-        for (i in 0 until 81) {
-            val o = Offset(p(Geo.col(i)), p(Geo.row(i)))
-            val v = values[i]
-            val given = SAMPLE[i] != '0'
-            val base = if (given) cs.surfaceContainerHighest else cs.surfaceContainerLow
-            val isHl = level >= 1 && v == hd
-            val blocked = level >= 4 && v == 0 && Geo.peers[i].any { values[it] == hd }
-            when {
-                i == sel -> drawShape(Morphs.of(Shp.selected, Shp.selected), 0f, cs.tertiaryContainer, Size(c * 1.2f, c * 1.2f), o - Offset(c * 0.1f, c * 0.1f))
-                isHl -> drawShape(Morphs.of(Shp.highlighted, Shp.highlighted), 0f, cs.primary, Size(c, c), o)
-                else -> drawRoundRect(
-                    when { blocked -> cs.surfaceContainerLowest; level >= 2 && i in peers -> lerp(base, cs.primary, 0.16f); else -> base },
-                    o, Size(c, c), CornerRadius(c * 0.2f),
-                )
-            }
-            if (v != 0) {
-                val l = measurer.measure("$v", ts(c * 0.6f / density / fontScale, if (given) 700 else 520, if (isHl) cs.onPrimary else if (given) cs.onSurface else cs.tertiary, rond = if (given) 0 else 100))
-                drawText(l, topLeft = Offset(o.x + (c - l.size.width) / 2, o.y + (c - l.size.height) / 2))
-            } else if (i != sel) {
-                // Notes: real candidates, the highlighted one lit at "Notes" and above.
-                var m = 0x3FE
-                for (q in Geo.peers[i]) if (values[q] != 0) m = m and (1 shl values[q]).inv()
-                if (i % 3 == 0 || i % 7 == 0) for (d in 1..9) if ((m shr d) and 1 == 1) {
-                    val nx = o.x + c * ((d - 1) % 3 + 0.5f) / 3f; val ny = o.y + c * ((d - 1) / 3 + 0.5f) / 3f
-                    if (d == hd && level >= 3) drawCircle(cs.primary, c * 0.15f, Offset(nx, ny))
-                    else drawCircle(cs.onSurfaceVariant.copy(alpha = 0.6f), c * 0.045f, Offset(nx, ny))
                 }
             }
         }

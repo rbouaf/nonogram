@@ -21,6 +21,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -51,21 +52,23 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.materialnonogram.AppModel
 import app.materialnonogram.data.Settings
-import app.materialnonogram.legacy.game.Accolade
-import app.materialnonogram.legacy.game.BAND_NAMES
-import app.materialnonogram.legacy.game.Game
-import app.materialnonogram.legacy.game.Geo
-import app.materialnonogram.legacy.game.NET_NAMES
-import app.materialnonogram.legacy.game.Report
-import app.materialnonogram.legacy.game.Status
-import app.materialnonogram.legacy.game.StrikeKind
-import app.materialnonogram.legacy.game.accolades
-import app.materialnonogram.legacy.game.clock
-import app.materialnonogram.legacy.game.clockMs
-import app.materialnonogram.legacy.game.median
-import app.materialnonogram.legacy.game.net
-import app.materialnonogram.legacy.game.recordKey
-import app.materialnonogram.legacy.game.signedDelta
+import app.materialnonogram.engine.Rung
+import app.materialnonogram.game.Accolade
+import app.materialnonogram.game.BAND_NAMES
+import app.materialnonogram.game.Game
+import app.materialnonogram.game.Mark
+import app.materialnonogram.game.NET_NAMES
+import app.materialnonogram.game.Report
+import app.materialnonogram.game.Status
+import app.materialnonogram.game.StrikeKind
+import app.materialnonogram.game.accolades
+import app.materialnonogram.game.buildReport
+import app.materialnonogram.game.clock
+import app.materialnonogram.game.clockMs
+import app.materialnonogram.game.median
+import app.materialnonogram.game.net
+import app.materialnonogram.game.recordKey
+import app.materialnonogram.game.signedDelta
 import app.materialnonogram.ui.kit.Hearts
 import app.materialnonogram.ui.kit.LevelChip
 import app.materialnonogram.ui.kit.LocalBuzz
@@ -79,48 +82,54 @@ import app.materialnonogram.ui.kit.Sym
 import app.materialnonogram.ui.kit.WordChip
 import app.materialnonogram.ui.kit.drawShape
 import app.materialnonogram.ui.kit.ts
-import app.materialnonogram.ui.play.DIFFICULTY_NAMES
+import app.materialnonogram.ui.play.TIER_NAMES
 import kotlinx.coroutines.delay
-import androidx.compose.material3.MaterialShapes
 
 /**
- * End of game, won and lost (board 6, locked). The time owns the hero; the timeline underneath
- * explains it step by step; accolades are MaterialShapes; every number is derived from the log.
+ * End of game, the minimal Phase 4 version (BUILD-PLAN §5.2 is the full one, Phase 5): the time on
+ * the tier's shape with the pattern as the trophy, accolades, four stat tiles, and the actions.
+ * Every number comes from the log through [Report].
  */
 @Composable
 fun ResultsScreen(model: AppModel, settings: Settings) {
     val g = model.finished ?: return
-    // Unrated at once (it is instant), then rated in the background (Analysis is ~ms per move).
+    // Unrated at once (instant), then rated in the background (EngineRater, ~50–500 ms on a 20×20).
     val quick = remember(g) { Report(g, null) }
-    val rated by androidx.compose.runtime.produceState<Report?>(null, g) {
-        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { Report(g, model.raterFor(g)) }
-    }
+    val rated by androidx.compose.runtime.produceState<Report?>(null, g) { value = buildReport(g) }
     val report = rated ?: quick
     val prior = model.history.filter { it.id != g.id }
     val cs = MaterialTheme.colorScheme
     val clip = LocalClipboardManager.current
     val buzz = LocalBuzz.current
-    LaunchedEffect(g) { if (g.status == Status.WON) { delay(200); buzz.won() } }
 
     Box(Modifier.fillMaxSize().systemBarsPadding()) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 104.dp)) {
             Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                LevelChip(g.deal.difficulty, g.deal.length, DIFFICULTY_NAMES)
+                Surface(color = cs.surfaceContainer, contentColor = cs.onSurface, shape = RoundedCornerShape(50)) {
+                    Row(Modifier.height(40.dp).padding(start = 6.dp, end = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        ShapeGlyph(Shp.difficulty[g.deal.tier.ordinal], 28.dp, cs.secondary)
+                        Spacer(Modifier.width(8.dp))
+                        Text(TIER_NAMES[g.deal.tier.ordinal], style = ts(15f, 650))
+                        Spacer(Modifier.width(8.dp))
+                        Text("${g.w}×${g.h}", style = ts(13f, 600, cs.onSurfaceVariant, wdth = 90, tnum = true))
+                    }
+                }
                 WordChip(null, if (g.net() == 0) "${g.rules.lives} lives" else NET_NAMES[g.net()], leading = {
                     if (g.net() == 2) Icon(Sym["shield"], null, Modifier.size(16.dp)) else ShapeGlyph(Shp.heart, 15.dp, cs.onSurfaceVariant, outline = true)
                 })
-                WordChip("emoji_events", if (report.assisted) "Assisted" else BAND_NAMES[g.band])
                 Spacer(Modifier.weight(1f))
-                // The puzzle's identity is its givens (06 §1.1): copy it to share or replay anywhere.
-                SquishIcon("content_copy", "Copy puzzle", { clip.setText(AnnotatedString(g.deal.givens)); buzz.toggle() }, size = 40.dp, iconSize = 20.dp)
+                // D10: the puzzle is its bitmap; share the checked code ("Copy as text" is the SGT ID, Phase 5).
+                SquishIcon("share", "Copy puzzle code", { clip.setText(AnnotatedString(g.deal.shareCode)); buzz.toggle() }, size = 40.dp, iconSize = 20.dp)
             }
             if (g.status == Status.WON) Won(g, report, prior) else Lost(g, report)
+            Text(
+                if (report.assisted) "Assisted · ${BAND_NAMES[g.band]}" else BAND_NAMES[g.band],
+                Modifier.padding(start = 22.dp, top = 12.dp), style = ts(12f, 540, cs.onSurfaceVariant),
+            )
         }
         Actions(g, model)
     }
 }
-
-// ── Won ──────────────────────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun Won(g: Game, r: Report, prior: List<Game>) {
@@ -128,11 +137,17 @@ private fun Won(g: Game, r: Report, prior: List<Game>) {
     val key = g.recordKey()
     val sameKey = prior.filter { it.status == Status.WON && it.recordKey() == key }
     val best = sameKey.minByOrNull { it.elapsed }
-    val usual = prior.filter { it.status == Status.WON && it.deal.difficulty == g.deal.difficulty && it.deal.length == g.deal.length && it.net() == g.net() }
+    val usual = prior.filter { it.status == Status.WON && it.w == g.w && it.h == g.h && it.deal.tier == g.deal.tier && it.net() == g.net() }
         .takeLast(30).map { it.elapsed }.median()
-    Hero(cs.primaryContainer, cs.onPrimaryContainer, g.deal.difficulty) {
-        Text(if (best == null || g.elapsed < best.elapsed) "Solved · new record" else "Solved", style = ts(12f, 600, cs.onPrimaryContainer.copy(alpha = 0.8f)))
-        BigTime(g.elapsed, 76f, cs.onPrimaryContainer)
+    Hero(cs.primaryContainer, cs.onPrimaryContainer, g.deal.tier.ordinal) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(if (best == null || g.elapsed < best.elapsed) "Solved · new record" else "Solved", style = ts(12f, 600, cs.onPrimaryContainer.copy(alpha = 0.8f)))
+                BigTime(g.elapsed, 64f, cs.onPrimaryContainer)
+            }
+            // The pattern is the trophy (README §3.7): the solution at 6.6 dp a cell.
+            Pattern(g, cs.onPrimaryContainer)
+        }
         Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (best != null) Pill(
                 "${signedDelta(g.elapsed - best.elapsed)} vs best ${clockMs(best.elapsed).let { it.first + it.second }}",
@@ -141,14 +156,121 @@ private fun Won(g: Game, r: Report, prior: List<Game>) {
             )
             if (usual != null) Pill("${clock(usual)} usual", cs.onPrimaryContainer.copy(alpha = 0.12f), cs.onPrimaryContainer)
         }
-        g.deal.famous?.let {
-            Spacer(Modifier.height(10.dp))
-            Pill("This was $it", cs.onPrimaryContainer, cs.primaryContainer)
-        }
     }
     Accolades(accolades(r, prior))
-    StatTiles(r)
-    Timeline(r, sameKey.minByOrNull { it.elapsed }?.let { Report(it, null) })
+    StatTiles(g, r)
+}
+
+@Composable
+private fun Pattern(g: Game, color: Color) {
+    val k = minOf(6.6f, 120f / maxOf(g.w, g.h))
+    Canvas(Modifier.size((g.w * k).dp, (g.h * k).dp)) {
+        val c = k.dp.toPx()
+        for (i in 0 until g.w * g.h) if (g.deal.puzzle.filled(i)) drawRect(color, Offset((i % g.w) * c, (i / g.w) * c), Size(c + 0.5f, c + 0.5f))
+    }
+}
+
+@Composable
+private fun StatTiles(g: Game, r: Report) {
+    val player = r.playerMarks
+    Row(Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        StatTile("Accuracy", "${(r.accuracy * 100).toInt()}", "%", "${player.count { it.correct }} of ${player.size + r.strikes.count { it.refused }}", Modifier.weight(0.92f))
+        if (r.rated) {
+            StatTile("Effort/min", "${r.effortPerMin}", "", "${r.effort} total", Modifier.weight(1f))
+            val h = r.hardest
+            val rung = h?.rating?.rung
+            val where = h?.let { if (rung != null && rung.isLine && it.rating!!.line >= 0) (if (it.rating!!.line < g.h) "row ${it.rating!!.line + 1}" else "column ${it.rating!!.line - g.h + 1}") else "r${it.cell / g.w + 1}c${it.cell % g.w + 1}" }
+            StatTile("Hardest step", rung?.let { if (it.isLine) "Line logic" else "Look-ahead" } ?: "—", "", where?.let { "$it · ${h.effort10 / 10}" } ?: "", Modifier.weight(1.42f), word = true)
+        } else {
+            StatTile("Per cell", "%.1f".format(r.secondsPerCell), "s", "${r.cells} cells", Modifier.weight(1f))
+            StatTile("Strokes", "${r.strokeCount}", "", "longest ${r.longestStroke}", Modifier.weight(1.42f))
+        }
+        StatTile("Rhythm", "${r.rhythm}", "", when { r.rhythm >= 70 -> "steady"; r.rhythm >= 45 -> "bursty"; else -> "uneven" }, Modifier.weight(0.9f))
+    }
+}
+
+@Composable
+private fun Lost(g: Game, r: Report) {
+    val cs = MaterialTheme.colorScheme
+    Hero(cs.surfaceContainerHigh, cs.onSurface, g.deal.tier.ordinal) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Hearts(0, g.rules.lives, 24.dp, spent = cs.onSurface)
+            Spacer(Modifier.width(10.dp))
+            Text("Out of lives", style = ts(26f, 560, cs.onSurface))
+        }
+        Spacer(Modifier.height(12.dp))
+        Text("Time survived", style = ts(12f, 600, cs.onSurfaceVariant))
+        BigTime(g.elapsed, 58f, cs.onSurface)
+    }
+    // How far you got: cells decided out of the total.
+    Surface(color = cs.surfaceContainerLow, shape = RoundedCornerShape(24.dp), modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp).fillMaxWidth()) {
+        Column(Modifier.padding(start = 14.dp, end = 14.dp, top = 11.dp, bottom = 12.dp)) {
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text("How far you got", Modifier.weight(1f), style = ts(14f, 650, cs.onSurface))
+                Text("${r.decided} of ${r.cells} cells · ${100 * r.decided / r.cells.coerceAtLeast(1)}%", style = ts(12f, 540, cs.onSurfaceVariant, tnum = true))
+            }
+            Spacer(Modifier.height(9.dp))
+            Canvas(Modifier.fillMaxWidth().height(((r.cells + 24) / 25 * 9).dp)) {
+                val cols = 25; val gp = 1.5.dp.toPx(); val s = (size.width - gp * (cols - 1)) / cols
+                val sh = minOf(s, 7.5.dp.toPx())
+                for (i in 0 until r.cells) {
+                    val o = Offset((i % cols) * (s + gp), (i / cols) * (sh + gp))
+                    drawRoundRect(if (i < r.decided) cs.tertiary else cs.surfaceContainerHighest, o, Size(s, sh), CornerRadius(2.dp.toPx()))
+                }
+            }
+        }
+    }
+    Surface(color = cs.surfaceContainerLow, shape = RoundedCornerShape(22.dp), modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp).fillMaxWidth()) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+            r.strikes.forEach { s ->
+                Row(Modifier.height(30.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) { Icon(Sym["close"], null, Modifier.size(16.dp), tint = cs.error) }
+                    Text(clock(s.t), Modifier.width(44.dp), style = ts(12.5f, 650, cs.onSurface, tnum = true))
+                    Text("r${s.cell / g.w + 1}c${s.cell % g.w + 1}", Modifier.width(52.dp), style = ts(12.5f, 540, cs.onSurfaceVariant, tnum = true))
+                    val what = if (s.value == Mark.FILLED) "fill" else "cross"
+                    Text(
+                        when (s.kind) {
+                            StrikeKind.SLIP -> "Slip: its line alone rules out a $what"
+                            StrikeKind.GUESS -> "Guess: nothing forced it yet"
+                            StrikeKind.WRONG -> "Wrong: only look-ahead shows it"
+                            null -> "A wrong $what"
+                        },
+                        style = ts(12.5f, 540, cs.onSurfaceVariant), maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
+    Text("Losses keep no time record. This one counts once in your stats as a loss.", Modifier.padding(start = 22.dp, end = 22.dp, top = 10.dp), style = ts(12f, 500, cs.onSurfaceVariant, lineHeight = 16f))
+}
+
+/** Home · Same puzzle · New game: a ButtonGroup [M3E-NEW] over a scrim. */
+@Composable
+private fun Actions(g: Game, model: AppModel) {
+    val cs = MaterialTheme.colorScheme
+    val buzz = LocalBuzz.current
+    Box(Modifier.fillMaxSize()) {
+        Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(104.dp)) {
+            Canvas(Modifier.fillMaxSize()) { drawRect(Brush.verticalGradient(0.38f to Color.Transparent, 0.38f to cs.surface.copy(alpha = 0f), 1f to cs.surface)) }
+        }
+        Row(Modifier.align(Alignment.BottomCenter).padding(start = 14.dp, end = 14.dp, bottom = 22.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            SquishIcon("home", "Home", { buzz.select(); model.screen = app.materialnonogram.Screen.HOME }, size = 56.dp, container = cs.surfaceContainerHigh, content = cs.onSurface, pressedCorner = 16.dp)
+            Surface(onClick = { buzz.press(); model.replay(g) }, color = cs.secondaryContainer, contentColor = cs.onSecondaryContainer, shape = RoundedCornerShape(16.dp), modifier = Modifier.weight(1f).height(56.dp)) {
+                Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Sym["replay"], null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp))
+                    Text(if (g.status == Status.WON) "Same puzzle" else "Try it again", style = ts(16f, 620), maxLines = 1)
+                }
+            }
+            val size = g.deal.size
+            if (size != null) Surface(onClick = { buzz.start(); model.start(g.deal.tier, size) }, color = cs.primary, contentColor = cs.onPrimary, shape = RoundedCornerShape(16.dp), modifier = Modifier.weight(1.2f).height(56.dp)) {
+                Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                    Text("New game", style = ts(16f, 620), maxLines = 1)
+                    Spacer(Modifier.width(8.dp))
+                    ShapeGlyph(Shp.difficulty[g.deal.tier.ordinal], 20.dp, cs.onPrimary.copy(alpha = 0.85f))
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -228,23 +350,6 @@ private fun badgeIcon(k: String) = when (k) {
 }
 
 @Composable
-private fun StatTiles(r: Report) {
-    Row(Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        StatTile("Accuracy", "${(r.accuracy * 100).toInt()}", "%", "${r.placements.size} of ${r.placements.size + r.strikes.size}", Modifier.weight(0.92f))
-        if (r.rated) {
-            StatTile("Effort/min", "${r.effortPerMin}", "", "${r.effort} total", Modifier.weight(1f))
-            val h = r.hardest
-            StatTile("Hardest step", h?.rating?.technique ?: "—", "", h?.let { "r${Geo.row(it.cell) + 1}c${Geo.col(it.cell) + 1} · ${it.rating!!.effort}" } ?: "", Modifier.weight(1.42f), word = true)
-        } else {
-            val per = if (r.placements.isEmpty()) 0 else r.time / r.placements.size
-            StatTile("Per cell", "%.1f".format(per / 1000.0), "s", "${r.placements.size} cells", Modifier.weight(1f))
-            StatTile("Strikes", "${r.strikes.size}", "", r.strikes.groupBy { it.kind }.entries.joinToString(" · ") { "${it.value.size} ${it.key.name.lowercase()}" }.ifEmpty { "none" }, Modifier.weight(1.42f))
-        }
-        StatTile("Rhythm", "${r.rhythm}", "", when { r.rhythm >= 70 -> "steady"; r.rhythm >= 45 -> "bursty"; else -> "uneven" }, Modifier.weight(0.9f))
-    }
-}
-
-@Composable
 private fun StatTile(label: String, value: String, unit: String, sub: String, modifier: Modifier, word: Boolean = false) {
     val cs = MaterialTheme.colorScheme
     Surface(color = cs.surfaceContainer, shape = RoundedCornerShape(18.dp), modifier = modifier) {
@@ -259,258 +364,3 @@ private fun StatTile(label: String, value: String, unit: String, sub: String, mo
     }
 }
 
-/**
- * The timeline (Monkeytype's grammar: one hero series, everything else recessive). Above: cells
- * filled over time, yours against your best. Below: seconds per cell as tiles. Drag to scrub; the
- * replay row below follows.
- */
-@Composable
-private fun Timeline(r: Report, best: Report?) {
-    val cs = MaterialTheme.colorScheme
-    var k by remember(r) { mutableIntStateOf(r.placements.size) }
-    val measurer = rememberTextMeasurer()
-    val axis = ts(10.5f, 560, cs.onSurfaceVariant, tnum = true)
-    Surface(color = cs.surfaceContainerLow, shape = RoundedCornerShape(28.dp), modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp).fillMaxWidth()) {
-        Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 8.dp)) {
-            Row(Modifier.padding(start = 4.dp, end = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Timeline", Modifier.weight(1f), style = ts(14f, 650, cs.onSurface))
-                Legend(cs.primary, "you"); Spacer(Modifier.width(10.dp))
-                if (best != null) Legend(cs.outline, "best", dashed = true)
-            }
-            val n = r.placements.size.coerceAtLeast(1)
-            val end = maxOf(r.time, best?.time ?: 0L).coerceAtLeast(1L)
-            val gaps = r.gaps
-            val maxGap = (gaps.sorted().getOrNull(gaps.size / 2)?.times(3) ?: 1L).coerceAtLeast(1000L)
-            Canvas(
-                Modifier.fillMaxWidth().height(200.dp)
-                    .pointerInput(r) {
-                        fun at(x: Float) { val t = (x / size.width) * end; k = r.placements.indexOfLast { it.t <= t } + 1 }
-                        detectTapGestures { at(it.x) }
-                    }
-                    .pointerInput(r) {
-                        // Horizontal only, so a vertical swipe still scrolls the page.
-                        detectHorizontalDragGestures { ch, _ -> val t = (ch.position.x / size.width) * end; k = (r.placements.indexOfLast { it.t <= t } + 1).coerceIn(0, n) }
-                    },
-            ) {
-                val w = size.width; val top = 18.dp.toPx(); val mid = size.height * 0.56f; val bot = size.height - 18.dp.toPx()
-                fun x(t: Long) = w * t / end
-                fun y(c: Int) = mid - (mid - top) * c / n
-                // Best: dashed.
-                if (best != null && best.placements.isNotEmpty()) {
-                    val p = Path().apply { moveTo(0f, mid); best.placements.forEachIndexed { i, pl -> lineTo(x(pl.t), y(i + 1)) } }
-                    drawPath(p, cs.outline, style = Stroke(1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))))
-                }
-                // You: a stepped line with a soft area.
-                val you = Path().apply {
-                    moveTo(0f, mid)
-                    r.placements.forEachIndexed { i, pl -> lineTo(x(pl.t), y(i)); lineTo(x(pl.t), y(i + 1)) }
-                    lineTo(x(r.time), y(r.placements.size))
-                }
-                val area = Path().apply { addPath(you); lineTo(x(r.time), mid); lineTo(0f, mid); close() }
-                drawPath(area, Brush.verticalGradient(listOf(cs.primary.copy(alpha = 0.28f), cs.primary.copy(alpha = 0.04f)), top, mid))
-                drawPath(you, cs.primary, style = Stroke(2.5.dp.toPx()))
-                drawText(measurer, "$n cells", Offset(4.dp.toPx(), top - 14.dp.toPx()), axis)
-                // Seconds per cell: one tile per placement, the scrubbed one lit.
-                val barW = (w / n * 0.7f).coerceIn(1.5f, 8.dp.toPx())
-                r.placements.forEachIndexed { i, pl ->
-                    val h = (bot - mid - 22.dp.toPx()) * (gaps[i].toFloat() / maxGap).coerceAtMost(1f)
-                    val c = when { i == k - 1 -> cs.primary; pl.rating?.technique == null && pl.rating != null -> cs.tertiary; else -> cs.onSurfaceVariant.copy(alpha = 0.45f) }
-                    drawRoundRect(c, Offset(x(pl.t) - barW, bot - h), Size(barW, h), CornerRadius(1.5f))
-                }
-                r.strikes.forEach { s ->
-                    drawCircle(cs.error, 5.dp.toPx(), Offset(x(s.t), mid + 12.dp.toPx()))
-                }
-                drawText(measurer, "seconds per cell", Offset(4.dp.toPx(), mid + 4.dp.toPx()), axis)
-                // Scrub line.
-                val tk = if (k == 0) 0L else r.placements[k - 1].t
-                drawLine(cs.onSurface, Offset(x(tk), top), Offset(x(tk), bot), 1.5.dp.toPx())
-                drawCircle(cs.onSurface, 5.dp.toPx(), Offset(x(tk), y(k)))
-                // Minutes axis.
-                val mins = (end / 60_000).toInt()
-                val step = when { mins > 30 -> 10; mins > 12 -> 5; mins > 5 -> 2; else -> 1 }
-                for (m in 0..mins step step) drawText(measurer, "$m", Offset(x(m * 60_000L) + 1f, bot + 3.dp.toPx()), axis)
-            }
-        }
-    }
-    Replay(r, k)
-}
-
-@Composable
-private fun Legend(c: Color, label: String, dashed: Boolean = false) {
-    val cs = MaterialTheme.colorScheme
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Canvas(Modifier.size(14.dp, 8.dp)) {
-            drawLine(c, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), 2.dp.toPx(), pathEffect = if (dashed) PathEffect.dashPathEffect(floatArrayOf(4f, 4f)) else null)
-        }
-        Spacer(Modifier.width(4.dp))
-        Text(label, style = ts(11.5f, 560, cs.onSurfaceVariant))
-    }
-}
-
-/** The board after step k, the placed tile lit in the highlight shape, and what that step was. */
-@Composable
-private fun Replay(r: Report, k: Int) {
-    val cs = MaterialTheme.colorScheme
-    Row(Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        MiniBoard(r.game, r.boards[k.coerceIn(0, r.boards.lastIndex)], if (k > 0) r.placements[k - 1].cell else -1, 15.dp)
-        Surface(color = cs.surfaceContainer, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f)) {
-            Column(Modifier.padding(start = 14.dp, end = 12.dp, top = 11.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                val p = r.placements.getOrNull(k - 1)
-                Text(if (p == null) "Start" else "Step $k of ${r.placements.size} · ${clock(p.t)}", style = ts(12.5f, 560, cs.onSurfaceVariant, tnum = true))
-                if (p != null) {
-                    Text(p.rating?.technique ?: if (p.rating != null) "Guess" else if (p.auto) "Auto-finish" else "Placed", style = ts(15.5f, 650, cs.onSurface))
-                    Text("r${Geo.row(p.cell) + 1}c${Geo.col(p.cell) + 1} = ${p.digit}", style = ts(12.5f, 560, cs.onSurfaceVariant, tnum = true))
-                    val gap = r.gaps[k - 1]
-                    Text("%.1f s to find".format(gap / 1000.0), style = ts(12.5f, 560, cs.onSurfaceVariant, tnum = true))
-                    p.rating?.let { rt ->
-                        if (rt.detour > 0) Pill("Effort ${rt.effort} · +${rt.detour} detour", cs.surfaceContainerHighest, cs.onSurface)
-                        else Pill("Effort ${rt.effort}", cs.surfaceContainerHighest, cs.onSurface)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun MiniBoard(g: Game, values: IntArray, lit: Int, cell: Dp, marks: Set<Int> = emptySet(), bad: Int = -1) {
-    val cs = MaterialTheme.colorScheme
-    val measurer = rememberTextMeasurer()
-    val gap = cell * 0.13f; val gut = cell * 0.4f
-    val total = cell * 9 + gap * 6 + gut * 2
-    Canvas(Modifier.size(total)) {
-        val c = cell.toPx(); val gp = gap.toPx(); val gt = gut.toPx()
-        fun p(k: Int) = k * (c + gp) + (k / 3) * (gt - gp)
-        val giv = ts(c * 0.62f / density / fontScale, 700, cs.onSurface)
-        val pl = ts(c * 0.62f / density / fontScale, 560, cs.tertiary, rond = 100)
-        for (i in 0 until 81) {
-            val o = Offset(p(Geo.col(i)), p(Geo.row(i)))
-            val v = values[i]
-            val isLit = i == lit
-            if (isLit) {
-                drawShape(Morphs.of(Shp.highlighted, Shp.highlighted), 0f, cs.primary, Size(c * 1.3f, c * 1.3f), o - Offset(c * 0.15f, c * 0.15f))
-            } else {
-                val bg = when { i == bad -> cs.error; g.isGiven(i) -> cs.surfaceContainerHighest; v != 0 -> cs.surfaceContainer; else -> cs.surfaceContainerLow }
-                drawRoundRect(bg, o, Size(c, c), CornerRadius(c * 0.22f))
-                if (i in marks) drawRoundRect(cs.primary, o, Size(c, c), CornerRadius(c * 0.22f), style = Stroke(1.5.dp.toPx()))
-            }
-            val d = if (i == bad) 0 else v
-            if (d != 0) {
-                val style = if (isLit) pl.copy(color = cs.onPrimary) else if (g.isGiven(i)) giv else pl
-                val l = measurer.measure(d.toString(), style)
-                drawText(l, topLeft = Offset(o.x + (c - l.size.width) / 2, o.y + (c - l.size.height) / 2))
-            }
-        }
-    }
-}
-
-// ── Lost ─────────────────────────────────────────────────────────────────────────────────────────
-
-@Composable
-private fun Lost(g: Game, r: Report) {
-    val cs = MaterialTheme.colorScheme
-    Hero(cs.surfaceContainerHigh, cs.onSurface, g.deal.difficulty) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Hearts(0, g.rules.lives, 24.dp, spent = cs.onSurface)
-            Spacer(Modifier.width(10.dp))
-            Text("Out of lives", style = ts(26f, 560, cs.onSurface))
-        }
-        Spacer(Modifier.height(12.dp))
-        Text("Time survived", style = ts(12f, 600, cs.onSurfaceVariant))
-        BigTime(g.elapsed, 58f, cs.onSurface)
-    }
-    // How far you got: a strip of tiles, one per cell you had to fill.
-    Surface(color = cs.surfaceContainerLow, shape = RoundedCornerShape(24.dp), modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp).fillMaxWidth()) {
-        Column(Modifier.padding(start = 14.dp, end = 14.dp, top = 11.dp, bottom = 12.dp)) {
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text("How far you got", Modifier.weight(1f), style = ts(14f, 650, cs.onSurface))
-                Text("${r.placements.size} of ${r.toFill} cells · ${100 * r.placements.size / r.toFill.coerceAtLeast(1)}%", style = ts(12f, 540, cs.onSurfaceVariant, tnum = true))
-            }
-            Spacer(Modifier.height(9.dp))
-            Canvas(Modifier.fillMaxWidth().height(28.dp)) {
-                val cols = 29; val gp = 2.5.dp.toPx(); val s = (size.width - gp * (cols - 1)) / cols
-                for (i in 0 until r.toFill) {
-                    val o = Offset((i % cols) * (s + gp), (i / cols) * (s + gp))
-                    if (i == r.placements.size) drawCircle(cs.error, s / 2, o + Offset(s / 2, s / 2))
-                    else drawRoundRect(if (i < r.placements.size) cs.tertiary else cs.surfaceContainerHighest, o, Size(s, s), CornerRadius(3.dp.toPx()))
-                }
-            }
-        }
-    }
-    val last = r.strikes.lastOrNull()
-    if (last != null) Row(Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        MiniBoard(g, r.boards.last(), -1, 15.dp, bad = last.cell)
-        Surface(color = cs.surfaceContainer, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f)) {
-            Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("What ended it", style = ts(12.5f, 600, cs.onSurfaceVariant))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("r${Geo.row(last.cell) + 1}c${Geo.col(last.cell) + 1}", style = ts(22f, 600, cs.onSurface))
-                    DigitTile(last.digit, cs.error, cs.onError)
-                    Text("was", style = ts(14f, 560, cs.onSurfaceVariant))
-                    DigitTile(g.solution[last.cell], cs.surfaceContainerHighest, cs.tertiary)
-                }
-                Text(
-                    when (last.kind) {
-                        StrikeKind.SLIP -> "A slip: ${last.digit} was already in that row, column or box."
-                        StrikeKind.GUESS -> "Not forced yet: other digits were still possible there. A coin flip, and it came up wrong."
-                        StrikeKind.WRONG -> "${last.digit} could not go there."
-                    },
-                    style = ts(12.5f, 500, cs.onSurfaceVariant, lineHeight = 17f),
-                )
-                Text("${last.singlesOpen} cells were open to a single right then. You had looked for %.1f s.".format(last.lookedMs / 1000.0), style = ts(12.5f, 500, cs.onSurfaceVariant, lineHeight = 17f))
-            }
-        }
-    }
-    Surface(color = cs.surfaceContainerLow, shape = RoundedCornerShape(22.dp), modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp).fillMaxWidth()) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-            r.strikes.forEach { s ->
-                Row(Modifier.height(30.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) { Icon(Sym["close"], null, Modifier.size(16.dp), tint = cs.error) }
-                    Text(clock(s.t), Modifier.width(44.dp), style = ts(12.5f, 650, cs.onSurface, tnum = true))
-                    Text("r${Geo.row(s.cell) + 1}c${Geo.col(s.cell) + 1}", Modifier.width(44.dp), style = ts(12.5f, 540, cs.onSurfaceVariant, tnum = true))
-                    Text(
-                        when (s.kind) { StrikeKind.SLIP -> "Slip: ${s.digit} was already there"; StrikeKind.GUESS -> "Guess: not forced yet"; StrikeKind.WRONG -> "${s.digit} can't go there" },
-                        style = ts(12.5f, 540, cs.onSurfaceVariant), maxLines = 1,
-                    )
-                }
-            }
-        }
-    }
-    Timeline(r, null)
-    Text("Losses keep no time record. This one counts once in your stats as a loss.", Modifier.padding(start = 22.dp, end = 22.dp, top = 10.dp), style = ts(12f, 500, cs.onSurfaceVariant, lineHeight = 16f))
-}
-
-@Composable
-private fun DigitTile(d: Int, bg: Color, fg: Color) {
-    Surface(color = bg, contentColor = fg, shape = RoundedCornerShape(6.dp), modifier = Modifier.size(24.dp)) {
-        Box(contentAlignment = Alignment.Center) { Text("$d", style = ts(14f, 700, fg)) }
-    }
-}
-
-/** Home · Same puzzle (Try it again) · New game: a ButtonGroup [M3E-NEW] over a scrim. */
-@Composable
-private fun Actions(g: Game, model: AppModel) {
-    val cs = MaterialTheme.colorScheme
-    val buzz = LocalBuzz.current
-    Box(Modifier.fillMaxSize()) {
-        Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(104.dp)) {
-            Canvas(Modifier.fillMaxSize()) { drawRect(Brush.verticalGradient(0.38f to Color.Transparent, 0.38f to cs.surface.copy(alpha = 0f), 1f to cs.surface)) }
-        }
-        Row(Modifier.align(Alignment.BottomCenter).padding(start = 14.dp, end = 14.dp, bottom = 22.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            SquishIcon("home", "Home", { buzz.select(); model.screen = app.materialnonogram.Screen.HOME }, size = 56.dp, container = cs.surfaceContainerHigh, content = cs.onSurface, pressedCorner = 16.dp)
-            Surface(onClick = { buzz.press(); model.replay(g) }, color = cs.secondaryContainer, contentColor = cs.onSecondaryContainer, shape = RoundedCornerShape(16.dp), modifier = Modifier.weight(1f).height(56.dp)) {
-                Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Sym["replay"], null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp))
-                    Text(if (g.status == Status.WON) "Same puzzle" else "Try it again", style = ts(16f, 620), maxLines = 1)
-                }
-            }
-            Surface(onClick = { buzz.start(); model.start(g.deal.difficulty, g.deal.length) }, color = cs.primary, contentColor = cs.onPrimary, shape = RoundedCornerShape(16.dp), modifier = Modifier.weight(1.2f).height(56.dp)) {
-                Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    Text("New game", style = ts(16f, 620), maxLines = 1)
-                    Spacer(Modifier.width(8.dp))
-                    ShapeGlyph(Shp.difficulty[g.deal.difficulty], 20.dp, cs.onPrimary.copy(alpha = 0.85f))
-                }
-            }
-        }
-    }
-}

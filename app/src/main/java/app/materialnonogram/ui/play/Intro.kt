@@ -11,47 +11,59 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import kotlinx.coroutines.launch
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.lerp
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.lerp
-import app.materialnonogram.legacy.game.Game
-import app.materialnonogram.legacy.game.Geo
+import app.materialnonogram.game.Game
+import app.materialnonogram.game.Mark
 import app.materialnonogram.ui.kit.LocalSprings
 import app.materialnonogram.ui.kit.Morphs
 import app.materialnonogram.ui.kit.Shp
 import app.materialnonogram.ui.kit.morphPath
+import kotlinx.coroutines.launch
 
 /**
- * Home → Play (user, 2026-10-27). Two different morphs, because the two buttons look different:
+ * Home → Play (Sudoku's two morphs, landing on the nonogram grid's own geometry):
  *
- * - **Start**: the big Start shape *is* the board. It flies from Home to the board's place, grows to
- *   its size and morphs from the difficulty's MaterialShape to a Square while its colour drains from
- *   primary to the board's surface; then the 81 tiles pop out of it in a wave from the centre.
- * - **Continue**: the card's obscured board *is* the board. Each of its 81 blocks flies to its own
- *   tile, in a wave spreading from the selected cell, its colour draining from the card's ink role
- *   into the tile's surface; the card's colour opens to the whole screen and fades; the digits fade in
- *   as the tiles land.
+ * - **Start**: the big Start shape *is* the board. It flies to the grid's place, grows to its size and
+ *   morphs from the tier's MaterialShape to a Square while its colour drains from primary to the
+ *   wells' tone; then the cells pop out of it in a wave from the centre.
+ * - **Continue**: the card's thumbnail *is* the board. Each of its blocks flies to its own cell in a
+ *   wave from the middle, its colour draining into the cell's; the card opens to the screen and fades.
  *
- * The overlay is drawn in window coordinates above everything; Play hides its board until the
- * hand-off. The game clock waits for the whole thing plus 100 ms.
+ * The overlay is drawn in window coordinates above everything; Play hides its grid until the hand-off.
+ * The game clock waits for the whole thing plus 100 ms.
  */
 sealed interface Intro {
     /** `subdued`: it was the secondaryContainer "New game" shape, not the primary Start. */
-    data class Start(val rect: Rect, val difficulty: Int, val subdued: Boolean = false) : Intro
+    data class Start(val rect: Rect, val tier: Int, val subdued: Boolean = false) : Intro
     data class Continue(val card: Rect, val cardRadius: Float, val thumb: GridGeo) : Intro
 }
 
-/** A grid's geometry in window pixels: origin of cell (0,0), cell size, gap inside a box, gutter between boxes. */
-data class GridGeo(val origin: Offset, val cell: Float, val gap: Float, val gut: Float) {
-    fun pos(k: Int) = k * (cell + gap) + (k / 3) * (gut - gap)
-    fun tile(i: Int) = Rect(Offset(origin.x + pos(Geo.col(i)), origin.y + pos(Geo.row(i))), Size(cell, cell))
-    val bounds: Rect get() = Rect(origin, Size(pos(8) + cell, pos(8) + cell))
+/**
+ * A grid's geometry in window pixels: origin of cell (0,0), the cell in dp, px per dp, the size, the
+ * gap inside a 5×5 block and the gutter between blocks (px), and the part of it on screen.
+ */
+data class GridGeo(
+    val origin: Offset,
+    val cellDp: Float,
+    val d: Float,
+    val w: Int,
+    val h: Int,
+    val minor: Float,
+    val major: Float,
+    val visible: Rect? = null,
+) {
+    val cell: Float get() = cellDp * d
+    fun pos(k: Int) = k * (cell + minor) + (k / 5) * (major - minor)
+    fun tile(i: Int) = Rect(Offset(origin.x + pos(i % w), origin.y + pos(i / w)), Size(cell, cell))
+    val bounds: Rect get() = visible ?: Rect(origin, Size(pos(w - 1) + cell, pos(h - 1) + cell))
 }
 
 @Composable
@@ -62,9 +74,8 @@ fun IntroOverlay(intro: Intro, board: GridGeo, game: Game, onReveal: () -> Unit,
     val fade = remember(intro) { Animatable(1f) }
     val path = remember { Path() }
     LaunchedEffect(intro, board) {
-        // Hand over to the real board as soon as the shape has all but landed, and start the
-        // overlay's fade right then: a spring's last few pixels take as long as the rest, and the
-        // digits must not wait under an opaque overlay for them.
+        // Hand over to the real board as soon as the shape has all but landed, and fade right then:
+        // a spring's last few pixels take as long as the rest.
         val fadeMs = if (intro is Intro.Start) 170 else 160
         val scope = this
         var revealed = false
@@ -86,40 +97,35 @@ fun IntroOverlay(intro: Intro, board: GridGeo, game: Game, onReveal: () -> Unit,
         val a = fade.value
         when (intro) {
             is Intro.Start -> {
-                // One shape, travelling and growing into the board, morphing to a Square as it goes.
                 val r = lerp(intro.rect, board.bounds, e)
-                val m = Morphs.of(Shp.difficulty[intro.difficulty], MaterialShapes.Square)
+                val m = Morphs.of(Shp.difficulty[intro.tier], MaterialShapes.Square)
                 morphPath(m, e.coerceIn(0f, 1.05f), r.size, path)
                 path.translate(r.topLeft)
                 rotate(-70f * (1f - e).coerceAtLeast(0f), r.center) {
                     val c0 = if (intro.subdued) cs.secondaryContainer else cs.primary
-                    drawPath(path, lerp(c0, cs.surfaceContainer, e.coerceIn(0f, 1f)).copy(alpha = a))
+                    drawPath(path, lerp(c0, cs.surfaceContainerHigh, e.coerceIn(0f, 1f)).copy(alpha = a))
                 }
             }
             is Intro.Continue -> {
-                // The card opens to the whole screen and fades as it goes.
                 val full = Rect(Offset.Zero, size)
                 val bg = lerp(intro.card, full, e.coerceIn(0f, 1f))
                 val rad = intro.cardRadius * (1f - e.coerceIn(0f, 1f))
                 drawRoundRect(cs.primaryContainer.copy(alpha = (1f - e).coerceIn(0f, 1f) * a), bg.topLeft, bg.size, CornerRadius(rad))
-                // Every block flies to its tile, in a wave from the selected cell, landing on the board's own tones.
-                val tones = tileTones(cs)
-                val from = game.selected.takeIf { it >= 0 } ?: 40
-                for (i in 0 until 81) {
-                    val d = Geo.euclid(i, from) / 11.3f
-                    val q = ((e * 1.45f) - d * 0.45f).coerceIn(0f, 1f)
+                val board0 = game.board
+                val n = board.w * board.h
+                val cx = board.w / 2f; val cy = board.h / 2f
+                val maxD = kotlin.math.hypot(cx, cy).coerceAtLeast(1f)
+                val clip = board.visible
+                for (i in 0 until n) {
+                    val dd = kotlin.math.hypot(i % board.w - cx, i / board.w - cy) / maxD
+                    val q = ((e * 1.45f) - dd * 0.45f).coerceIn(0f, 1f)
                     val qe = 1f - (1f - q) * (1f - q)
-                    val src = intro.thumb.tile(i)
-                    val dst = board.tile(i)
-                    val r = lerp(src, dst, qe)
-                    val c0 = when {
-                        game.isGiven(i) -> cs.onSurfaceVariant
-                        game.values[i] != 0 -> cs.tertiary
-                        else -> cs.surfaceContainerHighest
-                    }
-                    val c1 = if (game.isGiven(i)) tones.second else tones.first
-                    val rr = r.width * (0.18f + 0.1f * qe)
-                    drawRoundRect(lerp(c0, c1, qe).copy(alpha = a), r.topLeft, r.size, CornerRadius(rr))
+                    val r = lerp(intro.thumb.tile(i), board.tile(i), qe)
+                    val filled = board0[i] == Mark.FILLED
+                    val c0 = if (filled) cs.tertiary else cs.surfaceContainerHighest
+                    val c1 = if (filled) cs.tertiary else cs.surfaceContainerHigh
+                    val draw = { drawRoundRect(lerp(c0, c1, qe).copy(alpha = a), r.topLeft, r.size, CornerRadius(r.width * 0.12f)) }
+                    if (clip != null && qe > 0.5f) clipRect(clip.left, clip.top, clip.right, clip.bottom) { draw() } else draw()
                 }
             }
         }
