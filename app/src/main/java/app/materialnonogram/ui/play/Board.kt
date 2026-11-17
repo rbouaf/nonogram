@@ -547,7 +547,11 @@ fun Field(
             }
 
             // ── The grid ────────────────────────────────────────────────────────────────────────
-            clipRect(g.view.left - 8 * one, if (g.zoomed) g.gridTop else 0f, if (g.zoomed) g.view.right else g.fieldW, g.fieldH) {
+            // 8 dp of overhang lets a column-0 outline or pop spill into the clue gap; once a zoomed grid is
+            // panned left, column 0 slides under the row band, so the overhang shrinks to nothing or it
+            // paints over the last digit of every row clue.
+            val overhang = if (g.zoomed) (8 * one + g.panX).coerceAtLeast(0f) else 8 * one
+            clipRect(g.view.left - overhang, if (g.zoomed) g.gridTop else 0f, if (g.zoomed) g.view.right else g.fieldW, g.fieldH) {
                 val blockR = minOf(12f, 0.42f * L.c) * one
                 val innerR = 1f * one
                 val fillR = minOf(8f, 0.3f * L.c) * one
