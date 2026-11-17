@@ -17,7 +17,7 @@
         <!--
           The launcher entry is an alias, never the activity itself, so its label can be switched
           in Settings ("App name on your phone"): exactly one alias is enabled at a time. The full
-          name, "Material Sudoku", is the application label (system settings, app info, store).
+          name, "Material Nonogram", is the application label (system settings, app info, store).
         -->
         <activity
             android:name=".MainActivity"
