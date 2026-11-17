@@ -92,6 +92,7 @@ class MainActivity : ComponentActivity() {
                                 Screen.RESULTS -> ResultsScreen(model, s)
                                 Screen.STATS -> StatsScreen(model, s)
                                 Screen.SETTINGS -> SettingsScreen(model, s)
+                                Screen.OPEN -> app.materialnonogram.ui.home.OpenCodeScreen(model)
                             }
                         }
                         val intro = model.intro

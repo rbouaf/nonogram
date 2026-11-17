@@ -78,6 +78,8 @@ class Strike(
     /** Correct cells on the board at that moment. */
     val decided: Int,
     val board: ByteArray,
+    /** For a slip, the row or column whose logic alone shows the mark is wrong (rows, then columns); else -1. */
+    val line: Int = -1,
 )
 
 /** One stroke (or one hint placement, or one committed what-if layer), for the strokes-as-bars chart and the replay scrub. */
@@ -209,7 +211,7 @@ class Report(val game: Game, rater: Rater? = null, isCancelled: () -> Boolean = 
                         ms += m
                         if (m.credited && r?.rung != null && (openRung == null || r.rung > openRung!!)) { openRung = r.rung; openLine = r.line }
                         if (guess) openGuesses++
-                        if (!correct && src == Source.PLAYER) ss += Strike(e.t, e.cell, v, false, kindOf(r), r?.rung, decided, b.copyOf())
+                        if (!correct && src == Source.PLAYER) ss += Strike(e.t, e.cell, v, false, kindOf(r), r?.rung, decided, b.copyOf(), r?.line ?: -1)
                         refusedLast[e.cell] = false
                     }
                     set(e.cell, v)
@@ -222,7 +224,7 @@ class Report(val game: Game, rater: Rater? = null, isCancelled: () -> Boolean = 
                 Ev.REVERT -> set(e.cell, e.value.toByte())
                 Ev.MISTAKE -> {
                     val r = rate(e.cell)
-                    ss += Strike(e.t, e.cell, e.value.toByte(), true, kindOf(r), r?.rung, decided, b.copyOf())
+                    ss += Strike(e.t, e.cell, e.value.toByte(), true, kindOf(r), r?.rung, decided, b.copyOf(), r?.line ?: -1)
                     refusedLast[e.cell] = true
                     if (belongs) openStruck = true
                 }

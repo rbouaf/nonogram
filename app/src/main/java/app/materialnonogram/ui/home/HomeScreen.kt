@@ -100,12 +100,13 @@ import kotlinx.coroutines.launch
 
 private val TitleFont = FontFamily(Font(R.font.noto_sans_jp_title, FontWeight.ExtraBold))
 
+/** Each tier in plain words (the generator's rules, ENGINE.md "Tiers"), for Home's and Settings' long-press tips. */
 val DIFFICULTY_TECH = listOf(
-    "One line at a time, and the first look already places many cells. Dense patterns.",
-    "One line at a time, with fewer cells handed to you at the start.",
-    "One line at a time, but many passes across the board. Sparser patterns.",
-    "Somewhere you have to look ahead: try a cell, follow it, and see a line break. One to three times.",
-    "Looking ahead four or more times. From 15×15 up only.",
+    "Every row and column can be worked out on its own, and your first look already places a lot. Dense patterns.",
+    "Still one line at a time, but less is handed to you at the start.",
+    "One line at a time, but you go round the board many times, each pass opening up the next. Sparser patterns.",
+    "One to three times, no single line helps. Then imagine a cell filled, follow it, and watch a line break: that proves the cell is empty.",
+    "Like Expert, but you have to look ahead four or more times. Only from 15×15 up.",
 )
 
 /**
@@ -132,6 +133,9 @@ fun HomeScreen(model: AppModel, settings: Settings) {
         Row(Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             SquishIcon("bar_chart", "Stats", { buzz.select(); model.screen = Screen.STATS }, container = cs.surfaceContainerHigh, content = cs.onSurface, iconSize = 22.dp)
             Spacer(Modifier.weight(1f))
+            // D10: the other half of Share. Paste a code (or an SGT Pattern ID) and play it.
+            SquishIcon("content_paste", "Open a code", { buzz.select(); model.screen = Screen.OPEN }, container = cs.surfaceContainerHigh, content = cs.onSurface, iconSize = 22.dp)
+            Spacer(Modifier.width(8.dp))
             SquishIcon("settings", "Settings", { buzz.select(); model.openSettings(Screen.HOME) }, container = cs.surfaceContainerHigh, content = cs.onSurface, iconSize = 22.dp)
         }
         // The slot: one fixed box, two tenants (board 10).
@@ -316,7 +320,7 @@ private fun DifficultyTiles(enabled: List<Int>, sel: Int, size: PSize, onPick: (
                             label = TIER_NAMES[k], shape = Shp.difficulty[k], compact = enabled.size > 3,
                             greyed = !Generator.isOffered(size, Tier.entries[k]),
                         )
-                        if (tip == k) TechTip(k) { tip = -1 }
+                        if (tip == k) TechTip(k, size) { tip = -1 }
                     }
                 }
                 repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
@@ -326,21 +330,35 @@ private fun DifficultyTiles(enabled: List<Int>, sel: Int, size: PSize, onPick: (
 }
 
 @Composable
-private fun TechTip(k: Int, onDismiss: () -> Unit) {
+private fun TechTip(k: Int, size: PSize, onDismiss: () -> Unit) {
     val cs = MaterialTheme.colorScheme
-    LaunchedEffect(k) { delay(2600); onDismiss() }
-    Popup(alignment = Alignment.TopCenter, offset = androidx.compose.ui.unit.IntOffset(0, -260), onDismissRequest = onDismiss, properties = PopupProperties(focusable = false)) {
-        Surface(color = cs.surfaceContainerHighest, contentColor = cs.onSurfaceVariant, shape = RoundedCornerShape(12.dp), shadowElevation = 6.dp, modifier = Modifier.width(252.dp)) {
+    val gap = with(androidx.compose.ui.platform.LocalDensity.current) { 8.dp.roundToPx() }
+    LaunchedEffect(k) { delay(4200); onDismiss() }
+    Popup(popupPositionProvider = AboveAnchor(gap), onDismissRequest = onDismiss, properties = PopupProperties(focusable = false)) {
+        Surface(color = cs.inverseSurface, contentColor = cs.inverseOnSurface, shape = RoundedCornerShape(16.dp), shadowElevation = 6.dp, modifier = Modifier.width(272.dp)) {
             Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    ShapeGlyph(Shp.difficulty[k], 16.dp, cs.onSurfaceVariant)
+                    ShapeGlyph(Shp.difficulty[k], 18.dp, cs.inversePrimary)
                     Spacer(Modifier.width(8.dp))
-                    Text(TIER_NAMES[k], color = cs.onSurface, style = TextStyle(fontFamily = flex(14f, 600), fontSize = 14.sp))
+                    Text(TIER_NAMES[k], style = TextStyle(fontFamily = flex(15f, 650), fontSize = 15.sp))
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(DIFFICULTY_TECH[k], style = MaterialTheme.typography.bodyMedium)
+                if (!Generator.isOffered(size, Tier.entries[k])) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("Not at ${size.label}: pick 15×15 or larger.", style = MaterialTheme.typography.bodyMedium.copy(fontFamily = flex(14f, 620)), color = cs.inversePrimary)
+                }
             }
         }
+    }
+}
+
+/** Places a popup centred above its anchor, [gap] px clear of it, kept inside the window. */
+private class AboveAnchor(private val gap: Int) : androidx.compose.ui.window.PopupPositionProvider {
+    override fun calculatePosition(anchorBounds: androidx.compose.ui.unit.IntRect, windowSize: androidx.compose.ui.unit.IntSize, layoutDirection: androidx.compose.ui.unit.LayoutDirection, popupContentSize: androidx.compose.ui.unit.IntSize): androidx.compose.ui.unit.IntOffset {
+        val x = (anchorBounds.center.x - popupContentSize.width / 2).coerceIn(gap, (windowSize.width - popupContentSize.width - gap).coerceAtLeast(gap))
+        val y = (anchorBounds.top - popupContentSize.height - gap).coerceAtLeast(gap)
+        return androidx.compose.ui.unit.IntOffset(x, y)
     }
 }
 
@@ -354,6 +372,7 @@ private fun SizeTiles(sizes: List<PSize>, sel: PSize, tier: Tier, onPick: (PSize
                 PickTile(
                     on = s == sel, height = 72.dp, rest = rowCorners(k, sizes.size, 24.dp, 8.dp), full = 36.dp,
                     onClick = { onPick(s) }, label = s.label, grid = s, gridK = if (six) 1.5f else 1.6f, compact = true,
+                    gridBox = (sizes.maxOf { it.h } * (if (six) 1.5f else 1.6f)).dp,
                     labelSize = if (six) 13f else 14f, labelWdth = if (six) 80 else 90,
                     greyed = !Generator.isOffered(s, tier),
                 )
@@ -375,6 +394,8 @@ private fun PickTile(
     shape: RoundedPolygon? = null, onLongPress: (() -> Unit)? = null,
     grid: PSize? = null, gridK: Float = 1.6f, compact: Boolean = false, labelSize: Float = 16f, labelWdth: Int = 100,
     greyed: Boolean = false,
+    /** Every size glyph sits on one baseline this tall, so the labels line up across the row. */
+    gridBox: Dp = 0.dp,
 ) {
     val cs = MaterialTheme.colorScheme
     val springs = LocalSprings.current
@@ -392,7 +413,7 @@ private fun PickTile(
             .pointerInput(onLongPress, greyed) {
                 detectTapGestures(
                     onPress = { if (!greyed) { pressed = true; tryAwaitRelease(); pressed = false } },
-                    onTap = { if (!greyed) onClick() },
+                    onTap = { if (!greyed) onClick() else onLongPress?.invoke() },
                     onLongPress = onLongPress?.let { f -> { _: Offset -> f() } },
                 )
             }
@@ -422,7 +443,7 @@ private fun PickTile(
             if (shape != null) ShapeGlyph(shape, if (compact) 28.dp else 34.dp, lerp(cs.onSurfaceVariant, cs.onSecondary, c), Modifier.graphicsLayer {
                 val s = 1f + 0.16f * t; scaleX = s; scaleY = s; rotationZ = -12f * t
             })
-            if (grid != null) GridGlyph(grid, gridK, lerp(cs.onSurfaceVariant, cs.onSecondary, c))
+            if (grid != null) Box(Modifier.height(gridBox), contentAlignment = Alignment.BottomCenter) { GridGlyph(grid, gridK, lerp(cs.onSurfaceVariant, cs.onSecondary, c)) }
             Text(label, color = fg, maxLines = 1, style = TextStyle(fontFamily = flex(labelSize, if (on) 720 else 560, wdth = labelWdth), fontSize = labelSize.sp, lineHeight = (labelSize + 4).sp, fontFeatureSettings = "tnum"))
         }
     }

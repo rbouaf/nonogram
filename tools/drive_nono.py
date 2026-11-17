@@ -95,7 +95,8 @@ def main():
         ms = int(a[0]) if a else 120
         axis = a[1] if len(a) > 1 else "rows"
         limit = int(a[2]) if len(a) > 2 else 10 ** 9
-        _, w, h, bits = saved()
+        o, w, h, bits = saved()
+        board = list(o["board"])
         n = 0
         lines = range(h) if axis == "rows" else range(w)
         for L in lines:
@@ -106,12 +107,25 @@ def main():
                 if on:
                     run.append((r, c)); continue
                 if run:
-                    if all(visible(g, *p) for p in (run[0], run[-1])):
-                        if len(run) == 1: tap(g, *run[0])
-                        else: swipe(g, *run[0], *run[-1], ms)
-                        time.sleep(0.25)
-                        n += 1
-                        if n >= limit: return
+                    # Only cells not yet filled, in groups of one state: a stroke changes only cells in
+                    # its start cell's state, and one started on a filled cell would clear the run.
+                    groups, cur = [], []
+                    for p in run:
+                        st = board[p[0] * w + p[1]]
+                        if st == "1" or (cur and board[cur[-1][0] * w + cur[-1][1]] != st):
+                            if cur: groups.append(cur)
+                            cur = [] if st == "1" else [p]
+                        else:
+                            cur.append(p)
+                    if cur: groups.append(cur)
+                    for grp in groups:
+                        if all(visible(g, *q) for q in (grp[0], grp[-1])):
+                            if len(grp) == 1: tap(g, *grp[0])
+                            else: swipe(g, *grp[0], *grp[-1], ms)
+                            for q in grp: board[q[0] * w + q[1]] = "1"
+                            time.sleep(0.25)
+                            n += 1
+                            if n >= limit: return
                     run = []
     elif cmd == "board":
         o, w, h, bits = saved()

@@ -14,7 +14,12 @@ import app.materialnonogram.data.SettingsStore
 import app.materialnonogram.engine.Generator
 import app.materialnonogram.engine.Size
 import app.materialnonogram.engine.Tier
+import app.materialnonogram.game.Deal
+import app.materialnonogram.game.EngineRater
 import app.materialnonogram.game.Game
+import app.materialnonogram.game.GameSummary
+import app.materialnonogram.game.OpenCode
+import app.materialnonogram.game.Report
 import app.materialnonogram.game.PuzzleShop
 import app.materialnonogram.game.Status
 import app.materialnonogram.game.findHint
@@ -34,7 +39,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-enum class Screen { HOME, PLAY, RESULTS, STATS, SETTINGS }
+enum class Screen { HOME, PLAY, RESULTS, STATS, SETTINGS, OPEN }
 
 /** The app's one model: settings, the game in progress, finished games, and where we are. */
 class AppModel(app: Application) : AndroidViewModel(app) {
@@ -55,6 +60,13 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     var starting by mutableStateOf(false); private set
     /** A hint is being computed (a look-ahead hint on a 20×20 probes every unknown cell). */
     var thinking by mutableStateOf(false); private set
+
+    /** Where the solved board was on screen when Play handed over, so Results can shrink it into the hero. */
+    var finishedFrom by mutableStateOf<GridGeo?>(null); private set
+    /** Stats' per-game summaries by game id (GameSummary.key holds the engine versions). */
+    val summaries = androidx.compose.runtime.mutableStateMapOf<String, GameSummary>()
+    private val summaryCache = HashMap<String, GameSummary>()
+    private var summarising: kotlinx.coroutines.Job? = null
 
     /** Home → Play morph in flight (ui/play/Intro.kt), the board's measured place, and whether Play may show it. */
     var intro by mutableStateOf<Intro?>(null)
@@ -126,12 +138,40 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     private fun newId() = "n" + System.currentTimeMillis().toString(36)
 
     /** Same puzzle again: a fresh run of the same bitmap, under today's rules. */
-    fun replay(old: Game) {
-        val g = Game(id = newId(), deal = old.deal, rules = settings.value.rules())
+    fun replay(old: Game) = play(old.deal)
+
+    /** Plays [deal] (a replay, or an opened code) as a fresh run under today's rules. Replacing a game in progress is final. */
+    fun play(deal: Deal) {
+        current?.takeIf { it.status == Status.PLAYING }?.let { old -> viewModelScope.launch { save(old) } }
+        val g = Game(id = newId(), deal = deal, rules = settings.value.rules())
+        if (BuildConfig.DEBUG) logSolution(g)
         current = g
         viewModelScope.launch { save(g) }
         beginIntro(null)
         screen = Screen.PLAY
+    }
+
+    /** Home's "Open a code": a share code or an SGT Pattern ID, graded off the main thread (OpenCode). */
+    suspend fun openCode(text: String): OpenCode.Outcome = withContext(Dispatchers.Default) { OpenCode.open(text) }
+
+    /**
+     * Stats' summaries for [games], computed in the background and cached by game id + engine versions:
+     * every game unrated first (a log replay, ~ms), then Expert and Master rated for look-ahead (up to
+     * ~0.5 s each on a 20×20). Results appear as they finish.
+     */
+    fun summarise(games: List<Game>) {
+        if (summarising?.isActive == true) return
+        val todo = games.filter { it.status != Status.PLAYING || it.id != current?.id }
+        summarising = viewModelScope.launch {
+            for (rated in listOf(false, true)) for (g in todo) {
+                if (rated && !GameSummary.wantsRating(g)) continue
+                val key = GameSummary.key(g.id, rated)
+                val have = summaryCache[key] ?: withContext(Dispatchers.Default) {
+                    GameSummary.of(if (rated) Report(g, EngineRater(g.deal.puzzle)) else Report(g))
+                }.also { summaryCache[key] = it }
+                if (rated || summaries[g.id]?.rated != true) summaries[g.id] = have
+            }
+        }
     }
 
     /** One row per game; the log itself goes in the JSON export. */
@@ -158,6 +198,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     fun onFinished() {
         val g = current ?: return
         viewModelScope.launch { save(g) }
+        finishedFrom = boardGeo
         finished = g
         history = history + g
         current = null
