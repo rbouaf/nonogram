@@ -89,6 +89,20 @@ class GameTest {
         assertEquals(3, g.lives)
     }
 
+    @Test fun theCountAboveTheFingerIncludesMarksAlreadyThere() {
+        val g = game5(flag = true)
+        g.tap(c5(2, 1), Tool.FILL); g.tap(c5(2, 2), Tool.FILL)       // r2 is #####
+        g.beginStroke(c5(2, 1), Tool.FILL)                             // from a fill: nothing to change yet
+        g.extendStroke(c5(2, 2))
+        assertEquals(2, g.stroke!!.count)                              // used to say 0
+        g.extendStroke(c5(2, 4))
+        assertEquals(4, g.stroke!!.count)                              // 1–4: two already filled, two new
+        g.endStroke()
+        val h = game5()
+        h.beginStroke(c5(2, 0), Tool.FILL); h.extendStroke(c5(2, 3))
+        assertEquals(4, h.stroke!!.count)                              // a plain stroke counts as before
+    }
+
     @Test fun aWhatIfStillAllowsUndoInFlagMode() {
         val g = game5(flag = true)
         g.beginWhatIf()

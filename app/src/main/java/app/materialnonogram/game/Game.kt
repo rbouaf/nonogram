@@ -186,7 +186,23 @@ class Game(
         var finalized = false
         /** Began on a final mark ([marksFinal]): the start cell is never changed, whatever the tool. */
         var keepStart = false
-        val count: Int get() = applied.size + (if (pending) 1 else 0)
+        /**
+         * The live count above the finger: the cells from the start to the finger that carry the stroke's mark,
+         * marks already there included — so a drag over a run that is partly or wholly filled shows the run's
+         * length, not just the cells this stroke changed (user, 2026-11-17: it said 0 from a filled cell).
+         * An erasing stroke counts the cells it cleared.
+         */
+        val count: Int get() {
+            if (to == UNKNOWN) return applied.size + (if (pending) 1 else 0)
+            var n = 0
+            val lo = minOf(0, ext); val hi = maxOf(0, ext)
+            for (off in lo..hi) {
+                val cell = if (axis < 0) start else offCell(this, off)
+                if (cur[cell] == to || (off == 0 && pending)) n++
+                if (axis < 0) break
+            }
+            return n
+        }
     }
 
     private var st: StrokeState? = null
@@ -271,6 +287,7 @@ class Game(
             val dir = if (t > 0) 1 else -1
             val walked = if (s.ext != 0 && (s.ext > 0) == (t > 0)) kotlin.math.abs(s.ext) else 0
             for (k in walked + 1..kotlin.math.abs(t)) {
+                s.ext = k * dir
                 val cell = offCell(s, k * dir)
                 if (cur[cell] != s.from) continue // the start-cell rule: other states are passed over
                 if (!apply(s, cell, k * dir)) { showStroke(); return }
