@@ -143,13 +143,18 @@ object SgtId {
             val len = if (i < w) h else w
             if (f.isEmpty()) { lines[i] = IntArray(0); continue }
             val parts = f.split('.')
+            // A line of length len holds at most (len + 1) / 2 runs; checking before allocating, and
+            // stopping as soon as the running need exceeds len, keeps hostile input from overflowing.
+            if (parts.size > (len + 1) / 2) return Parsed(null, Problem.CLUE_TOO_LONG)
             val cl = IntArray(parts.size)
+            var need = parts.size - 1
             for (j in parts.indices) {
                 val v = parseInt(parts[j]) ?: return Parsed(null, Problem.BAD_NUMBER)
                 if (v < 1) return Parsed(null, Problem.BAD_NUMBER)
+                need += v
+                if (need > len) return Parsed(null, Problem.CLUE_TOO_LONG)
                 cl[j] = v
             }
-            if (cl.sum() + cl.size - 1 > len) return Parsed(null, Problem.CLUE_TOO_LONG)
             lines[i] = cl
         }
         val cols = Array(w) { lines[it]!! }

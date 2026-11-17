@@ -101,6 +101,10 @@ class CodecTest {
         assertEquals(SgtId.Problem.RANDOM_SEED, SgtId.parse("10x10#123456789012345").problem)
         assertEquals(SgtId.Problem.BAD_LINE_COUNT, SgtId.parse("3:1//1/1/").problem)
         assertEquals(SgtId.Problem.CLUE_TOO_LONG, SgtId.parse("3:2.1//1/1//1").problem)
+        // Hostile input: far more numbers than a line can hold, and sums that would overflow an Int.
+        val many = (1..200_000).joinToString(".") { "9999" }
+        assertEquals(SgtId.Problem.CLUE_TOO_LONG, SgtId.parse("5x5:$many/1/1/1/1/1/1/1/1/1").problem)
+        assertEquals(SgtId.Problem.CLUE_TOO_LONG, SgtId.parse("5x5:9999.9999/1/1/1/1/1/1/1/1/1").problem)
         assertEquals(SgtId.Problem.NOT_SGT, SgtId.parse("hello").problem)
         assertEquals(SgtId.Problem.BAD_SIZE, SgtId.parse("65x2:" + "/".repeat(66)).problem)
     }

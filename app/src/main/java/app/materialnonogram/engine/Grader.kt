@@ -111,6 +111,7 @@ object Grader {
         var contradiction = false
         var stopped = false
         val lineRungs = arrayOf(Rung.L1, Rung.L2, Rung.L3)
+        var p2Limit = -1L // set on first entry to P2: the budget covers every P2 step together, not each one
 
         main@ while (true) {
             for (rung in lineRungs) {
@@ -166,7 +167,8 @@ object Grader {
 
             // ---- P2, layered
             if (!allowP2) break
-            val limit = s.probes + p2ProbeBudget
+            if (p2Limit < 0) p2Limit = s.probes + p2ProbeBudget
+            val limit = p2Limit
             val next = g.copyOf(); var forced = 0
             for (cell in 0 until n) {
                 if (g[cell] != UNKNOWN) continue

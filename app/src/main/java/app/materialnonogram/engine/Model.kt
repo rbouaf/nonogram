@@ -84,9 +84,10 @@ class Clues(val w: Int, val h: Int, val rows: Array<IntArray>, val cols: Array<I
     /** The sums agree and every line's clue fits its length: necessary (not sufficient) for a solution. */
     fun isPlausible(): Boolean {
         for (i in 0 until lineCount) {
-            val cl = line(i); var need = cl.size - 1
-            for (x in cl) { if (x < 1) return false; need += x }
-            if (cl.isNotEmpty() && need > lineLength(i)) return false
+            val cl = line(i); val len = lineLength(i)
+            if (cl.size > (len + 1) / 2) return false
+            var need = cl.size - 1
+            for (x in cl) { if (x < 1 || x > len) return false; need += x; if (need > len) return false }
         }
         return rows.sumOf { it.sum() } == cols.sumOf { it.sum() }
     }
