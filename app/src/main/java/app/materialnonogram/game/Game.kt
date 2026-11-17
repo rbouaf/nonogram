@@ -184,6 +184,8 @@ class Game(
         val applied = ArrayList<Entry>()
         var stopped = false
         var finalized = false
+        /** Began on a final mark ([marksFinal]): the start cell is never changed, whatever the tool. */
+        var keepStart = false
         val count: Int get() = applied.size + (if (pending) 1 else 0)
     }
 
@@ -208,6 +210,16 @@ class Game(
     fun beginStroke(cell: Int, tool: Tool = this.tool, deferStart: Boolean = true): Boolean {
         if (!canPlay || cell !in 0 until cells) return false
         endStroke()
+        if (marksFinal && cur[cell] != UNKNOWN) {
+            // A judged mark is final: the start cell stays as it is, and the stroke marks only the
+            // unknown cells it passes, so dragging from a filled cell carries on filling (user, 2026-11-17).
+            val s = StrokeState(strokeSeq++, cell, tool, UNKNOWN, deferred = false)
+            s.pending = false; s.startApplied = true; s.keepStart = true
+            st = s
+            emit(Fx.Pressed(cell, tool, UNKNOWN))
+            showStroke()
+            return true
+        }
         val s = StrokeState(strokeSeq++, cell, tool, cur[cell], deferStart)
         st = s
         emit(Fx.Pressed(cell, tool, s.to))
@@ -215,6 +227,12 @@ class Game(
         showStroke()
         return true
     }
+
+    /**
+     * Flag mode outside a what-if: every mark on the board was judged right when it was made, so marks
+     * are final — a tap on one never clears it, and there is nothing to undo (user, 2026-11-17).
+     */
+    val marksFinal: Boolean get() = rules.flagMistakes && !inWhatIf
 
     /** A tap: down and up on one cell with [tool]. */
     fun tap(cell: Int, tool: Tool = this.tool): Boolean {
@@ -302,6 +320,12 @@ class Game(
     fun switchStrokeTool(): Boolean {
         val s = st ?: return false
         if (s.finalized || s.stopped || s.ext != 0 || !canPlay) return false
+        if (s.keepStart) {
+            s.tool = s.tool.other; s.to = s.tool.mark
+            emit(Fx.ToolSwitched(s.tool, longPress = true))
+            showStroke()
+            return true
+        }
         if (s.startApplied) {
             cur[s.start] = s.before[s.start]; curAuto[s.start] = s.beforeAuto[s.start]
             s.applied.clear(); s.startApplied = false
@@ -425,8 +449,8 @@ class Game(
 
     // ── Undo / redo ──────────────────────────────────────────────────────────────────────────────
 
-    val canUndo: Boolean get() = undoStack.size > barrier && status == Status.PLAYING
-    val canRedo: Boolean get() = redoStack.isNotEmpty() && status == Status.PLAYING
+    val canUndo: Boolean get() = !marksFinal && undoStack.size > barrier && status == Status.PLAYING
+    val canRedo: Boolean get() = !marksFinal && redoStack.isNotEmpty() && status == Status.PLAYING
 
     fun undo(): Boolean {
         if (!canPlay || st != null || !canUndo) return false

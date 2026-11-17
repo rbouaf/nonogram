@@ -53,6 +53,49 @@ class GameTest {
         assertEquals(FILLED, g.board[0])
     }
 
+    // ── Flag mode: judged marks are final (user, 2026-11-17) ───────────────────────────────────────
+
+    @Test fun flagModeATapOnAFillNeverClearsItAndThereIsNoUndo() {
+        val g = game5(flag = true)
+        g.tap(c5(0, 0), Tool.FILL)
+        assertEquals(FILLED, g.board[0])
+        assertFalse(g.canUndo)
+        assertFalse(g.undo())
+        g.tap(c5(0, 0), Tool.FILL)                    // used to clear it
+        g.tap(c5(0, 0), Tool.CROSS)                   // used to cost a life
+        assertEquals(FILLED, g.board[0])
+        assertEquals(3, g.lives)
+    }
+
+    @Test fun flagModeADragFromAFillCarriesOnFillingTheUnknownCells() {
+        val g = game5(flag = true)
+        g.tap(c5(2, 0), Tool.FILL)
+        g.beginStroke(c5(2, 0), Tool.FILL)
+        g.extendStroke(c5(2, 4))
+        g.endStroke()
+        assertEquals(List(5) { FILLED }, (0..4).map { g.board[c5(2, it)] })
+        assertEquals(3, g.lives)
+    }
+
+    @Test fun flagModeHoldingOnAFillSwitchesToolWithoutTouchingIt() {
+        val g = game5(flag = true)
+        g.tap(c5(0, 2), Tool.FILL)                    // r0 is ###..
+        g.beginStroke(c5(0, 2), Tool.FILL)
+        assertTrue(g.switchStrokeTool())
+        assertEquals(FILLED, g.board[c5(0, 2)])
+        g.extendStroke(c5(0, 4))
+        g.endStroke()
+        assertEquals(listOf(FILLED, CROSSED, CROSSED), (2..4).map { g.board[c5(0, it)] })
+        assertEquals(3, g.lives)
+    }
+
+    @Test fun aWhatIfStillAllowsUndoInFlagMode() {
+        val g = game5(flag = true)
+        g.beginWhatIf()
+        g.tap(c5(0, 0), Tool.FILL)
+        assertTrue(g.canUndo)
+    }
+
     @Test fun aStrokeLocksToItsRowAndNeverSkipsACell() {
         val g = game5()
         g.beginStroke(c5(2, 0), Tool.FILL)
@@ -200,7 +243,7 @@ class GameTest {
         assertEquals(2, g.lives)
         assertEquals(listOf(Ev.MARK, Ev.MARK, Ev.MARK, Ev.MISTAKE), g.events.map { it.kind })
         assertEquals(1, g.drainFx().count { it is Fx.Mistake })
-        assertTrue(g.canUndo)
+        assertFalse(g.canUndo)                          // flag mode: the three fills are judged and final
         assertTrue(Report(g).strokes.single().struck)
     }
 
@@ -213,13 +256,13 @@ class GameTest {
         assertNull(g.stroke)
     }
 
-    @Test fun aWrongCrossCostsALifeAndClearingNeverDoes() {
+    @Test fun aWrongCrossCostsALifeAndARightFillIsFinal() {
         val g = game5(flag = true)
         g.tap(c5(0, 0), Tool.CROSS)
         assertEquals(UNKNOWN, g.board[0]); assertEquals(2, g.lives)
         g.tap(c5(0, 0), Tool.FILL)
-        g.tap(c5(0, 0), Tool.FILL)                     // clears it
-        assertEquals(UNKNOWN, g.board[0]); assertEquals(2, g.lives)
+        g.tap(c5(0, 0), Tool.FILL)                     // used to clear it; flag-mode marks are final
+        assertEquals(FILLED, g.board[0]); assertEquals(2, g.lives)
     }
 
     @Test fun aWrongPendingStartSwitchedByLongPressIsNoMistake() {
@@ -404,8 +447,8 @@ class GameTest {
         assertFalse(g.inWhatIf)
         assertEquals(5, g.events.count { it.kind == Ev.MARK })
         assertArrayEquals(g.board, replay(g))
-        g.undo()                                        // the whole hypothesis is one undo unit
-        assertEquals(1, (0..4).count { g.board[c5(2, it)] == FILLED })
+        assertFalse(g.undo())                           // committed in flag mode: judged, so final
+        assertEquals(5, (0..4).count { g.board[c5(2, it)] == FILLED })
     }
 
     @Test fun whatIfNeverChargesALifeUntilAWrongHypothesisIsCommitted() {

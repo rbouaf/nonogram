@@ -558,7 +558,9 @@ private fun Tools(game: Game, ui: PlayUi, settings: Settings, onHint: () -> Unit
     @Suppress("UNUSED_VARIABLE") val rev = game.revision
     val b = game.board
     Row(modifier.fillMaxWidth().height(72.dp).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        // Flag mode: every mark was judged right as it was made, so there is nothing to undo (a what-if
+        // layer is the exception: its guesses are unjudged). Fill and Cross take the room.
+        if (!game.marksFinal) Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             ToolKey("undo", "Undo", RoundedCornerShape(24.dp, 8.dp, 8.dp, 24.dp), 48.dp, game.canUndo && b.isNotEmpty()) { game.undo() }
             ToolKey("redo", "Redo", RoundedCornerShape(8.dp, 24.dp, 24.dp, 8.dp), 48.dp, game.canRedo) { game.redo() }
         }
