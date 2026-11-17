@@ -79,8 +79,8 @@ import app.materialnonogram.AppModel
 import app.materialnonogram.R
 import app.materialnonogram.Screen
 import app.materialnonogram.data.Settings
-import app.materialnonogram.game.Game
-import app.materialnonogram.game.Geo
+import app.materialnonogram.legacy.game.Game
+import app.materialnonogram.legacy.game.Geo
 import app.materialnonogram.ui.kit.Hearts
 import app.materialnonogram.ui.kit.LocalBuzz
 import app.materialnonogram.ui.kit.LocalSprings

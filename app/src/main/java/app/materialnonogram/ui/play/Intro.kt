@@ -20,8 +20,8 @@ import androidx.compose.ui.geometry.lerp
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.lerp
-import app.materialnonogram.game.Game
-import app.materialnonogram.game.Geo
+import app.materialnonogram.legacy.game.Game
+import app.materialnonogram.legacy.game.Geo
 import app.materialnonogram.ui.kit.LocalSprings
 import app.materialnonogram.ui.kit.Morphs
 import app.materialnonogram.ui.kit.Shp

@@ -2,8 +2,8 @@ plugins { kotlin("jvm") version "2.4.0" }
 
 val app = file("../../app/src")
 sourceSets {
-    main { kotlin.srcDir("$app/main/java/app/materialnonogram/engine"); kotlin.srcDir("src/main/kotlin") }
-    test { kotlin.srcDir("$app/test/java/app/materialnonogram/engine") }
+    main { kotlin.srcDir("$app/main/java/app/materialnonogram/legacy/engine"); kotlin.srcDir("src/main/kotlin") }
+    test { kotlin.srcDir("$app/test/java/app/materialnonogram/legacy/engine") }
 }
 kotlin { jvmToolchain(21) }
 dependencies {
@@ -18,7 +18,7 @@ tasks.test {
 }
 tasks.register<JavaExec>("run") {
     classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set(System.getProperty("main") ?: "app.materialnonogram.engine.tools.BankToolKt")
+    mainClass.set(System.getProperty("main") ?: "app.materialnonogram.legacy.engine.tools.BankToolKt")
     args = (System.getProperty("args") ?: "").split(" ").filter { it.isNotEmpty() }
     maxHeapSize = "4g"
 }

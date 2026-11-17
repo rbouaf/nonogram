@@ -68,8 +68,8 @@ import app.materialnonogram.data.Haptics
 import app.materialnonogram.data.Input
 import app.materialnonogram.data.Motion
 import app.materialnonogram.data.Settings
-import app.materialnonogram.game.BAND_NAMES
-import app.materialnonogram.game.Geo
+import app.materialnonogram.legacy.game.BAND_NAMES
+import app.materialnonogram.legacy.game.Geo
 import app.materialnonogram.ui.home.DIFFICULTY_TECH
 import app.materialnonogram.ui.kit.LocalBuzz
 import app.materialnonogram.ui.kit.LocalSprings

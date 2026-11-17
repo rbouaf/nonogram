@@ -10,20 +10,20 @@ import androidx.lifecycle.viewModelScope
 import app.materialnonogram.data.GameStore
 import app.materialnonogram.data.Settings
 import app.materialnonogram.data.SettingsStore
-import app.materialnonogram.engine.Analysis
-import app.materialnonogram.engine.Difficulty
-import app.materialnonogram.engine.Famous
-import app.materialnonogram.game.PlacementRating
-import app.materialnonogram.engine.Generator
-import app.materialnonogram.engine.Hints
-import app.materialnonogram.engine.Length
-import app.materialnonogram.game.Deal
-import app.materialnonogram.game.Game
-import app.materialnonogram.game.Geo
-import app.materialnonogram.game.HintView
-import app.materialnonogram.game.Mode
-import app.materialnonogram.game.Rules
-import app.materialnonogram.game.Status
+import app.materialnonogram.legacy.engine.Analysis
+import app.materialnonogram.legacy.engine.Difficulty
+import app.materialnonogram.legacy.engine.Famous
+import app.materialnonogram.legacy.game.PlacementRating
+import app.materialnonogram.legacy.engine.Generator
+import app.materialnonogram.legacy.engine.Hints
+import app.materialnonogram.legacy.engine.Length
+import app.materialnonogram.legacy.game.Deal
+import app.materialnonogram.legacy.game.Game
+import app.materialnonogram.legacy.game.Geo
+import app.materialnonogram.legacy.game.HintView
+import app.materialnonogram.legacy.game.Mode
+import app.materialnonogram.legacy.game.Rules
+import app.materialnonogram.legacy.game.Status
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.SharingStarted
@@ -104,7 +104,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Rates each placement against the board the player actually had (02 §2.4). */
-    fun raterFor(g: Game) = app.materialnonogram.game.Rater { values, cell, digit ->
+    fun raterFor(g: Game) = app.materialnonogram.legacy.game.Rater { values, cell, digit ->
         val r = Analysis.rate(values, cell, digit, g.deal.solution)
         PlacementRating(r.technique?.displayName, r.technique?.difficulty?.ordinal ?: -1, r.effort, r.easiest?.displayName, r.detour)
     }

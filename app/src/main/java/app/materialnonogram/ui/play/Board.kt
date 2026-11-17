@@ -44,11 +44,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.graphics.shapes.RoundedPolygon
 import app.materialnonogram.data.Settings
-import app.materialnonogram.game.Fx
-import app.materialnonogram.game.Game
-import app.materialnonogram.game.Geo
-import app.materialnonogram.game.Status
-import app.materialnonogram.game.hasBit
+import app.materialnonogram.legacy.game.Fx
+import app.materialnonogram.legacy.game.Game
+import app.materialnonogram.legacy.game.Geo
+import app.materialnonogram.legacy.game.Status
+import app.materialnonogram.legacy.game.hasBit
 import app.materialnonogram.ui.kit.LocalBuzz
 import app.materialnonogram.ui.kit.LocalSprings
 import app.materialnonogram.ui.kit.Morphs

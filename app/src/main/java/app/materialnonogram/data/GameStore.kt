@@ -1,11 +1,11 @@
 package app.materialnonogram.data
 
 import android.content.Context
-import app.materialnonogram.game.Deal
-import app.materialnonogram.game.Ev
-import app.materialnonogram.game.Game
-import app.materialnonogram.game.Rules
-import app.materialnonogram.game.Status
+import app.materialnonogram.legacy.game.Deal
+import app.materialnonogram.legacy.game.Ev
+import app.materialnonogram.legacy.game.Game
+import app.materialnonogram.legacy.game.Rules
+import app.materialnonogram.legacy.game.Status
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File

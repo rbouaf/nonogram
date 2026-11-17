@@ -70,10 +70,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.repeatOnLifecycle
 import app.materialnonogram.data.Input
 import app.materialnonogram.data.Settings
-import app.materialnonogram.game.Fx
-import app.materialnonogram.game.Game
-import app.materialnonogram.game.Mode
-import app.materialnonogram.game.Status
+import app.materialnonogram.legacy.game.Fx
+import app.materialnonogram.legacy.game.Game
+import app.materialnonogram.legacy.game.Mode
+import app.materialnonogram.legacy.game.Status
 import app.materialnonogram.ui.kit.Hearts
 import app.materialnonogram.ui.kit.LocalBuzz
 import app.materialnonogram.ui.kit.LocalSprings
@@ -153,7 +153,7 @@ fun PlayScreen(
     LaunchedEffect(game.values, settings.easyCellMarker) {
         if (!settings.easyCellMarker || game.status != Status.PLAYING) { game.easyCell = -1; return@LaunchedEffect }
         game.markAssisted()
-        val step = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { app.materialnonogram.engine.Hints.next(game.values, null, game.deal.solution) }
+        val step = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { app.materialnonogram.legacy.engine.Hints.next(game.values, null, game.deal.solution) }
         game.easyCell = step?.placements?.firstOrNull()?.first ?: -1
     }
     // B4: the easy end fills one cell at a time, so you watch it travel across the board.

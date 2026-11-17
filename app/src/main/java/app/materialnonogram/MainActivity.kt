@@ -81,7 +81,7 @@ class MainActivity : ComponentActivity() {
                                         onSettings = { model.openSettings(Screen.PLAY) },
                                         onHint = model::hint,
                                         onFinished = model::onFinished,
-                                        halfwayLine = { shown -> app.materialnonogram.game.halfwayLine(g, model.history, shown) },
+                                        halfwayLine = { shown -> app.materialnonogram.legacy.game.halfwayLine(g, model.history, shown) },
                                         introActive = model.intro != null,
                                         revealed = model.revealed,
                                         introKind = when (model.intro) { is app.materialnonogram.ui.play.Intro.Continue -> 1; else -> 0 },
