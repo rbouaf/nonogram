@@ -39,7 +39,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-enum class Screen { HOME, PLAY, RESULTS, STATS, SETTINGS, OPEN }
+enum class Screen { HOME, PLAY, RESULTS, STATS, SETTINGS, OPEN, DRAW }
 
 /** The app's one model: settings, the game in progress, finished games, and where we are. */
 class AppModel(app: Application) : AndroidViewModel(app) {

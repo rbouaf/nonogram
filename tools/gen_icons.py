@@ -32,7 +32,7 @@ WANT = ["undo", "ink_eraser", "lightbulb", "ink_pen", "apps", "arrow_back", "pau
         "local_fire_department", "bolt", "skip_next", "expand_more",
         "trending_up", "schedule", "flag", "military_tech", "star", "help",
         "redo", "fit_screen", "fact_check", "zoom_in_map", "alt_route",
-        "neurology", "diamond", "content_paste", "ios_share", "keyboard"] + sys.argv[1:]
+        "neurology", "diamond", "content_paste", "ios_share", "keyboard", "remove", "draw"] + sys.argv[1:]
 out = {}
 for n in WANT:
     out[n] = icons.get(n) or fetch(n)

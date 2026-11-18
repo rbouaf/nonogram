@@ -132,6 +132,9 @@ fun HomeScreen(model: AppModel, settings: Settings) {
     Column(Modifier.fillMaxSize().systemBarsPadding()) {
         Row(Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             SquishIcon("bar_chart", "Stats", { buzz.select(); model.screen = Screen.STATS }, container = cs.surfaceContainerHigh, content = cs.onSurface, iconSize = 22.dp)
+            Spacer(Modifier.width(8.dp))
+            // Draw a puzzle by hand and copy its code (nothing is saved).
+            SquishIcon("draw", "Draw a puzzle", { buzz.select(); model.screen = Screen.DRAW }, container = cs.surfaceContainerHigh, content = cs.onSurface, iconSize = 22.dp)
             Spacer(Modifier.weight(1f))
             // D10: the other half of Share. Paste a code (or an SGT Pattern ID) and play it.
             SquishIcon("content_paste", "Open a code", { buzz.select(); model.screen = Screen.OPEN }, container = cs.surfaceContainerHigh, content = cs.onSurface, iconSize = 22.dp)
