@@ -28,7 +28,7 @@ class GameSummary(
         )
 
         /** Look-ahead only exists on Expert and Master, so only those are worth rating for Stats. */
-        fun wantsRating(g: Game) = g.deal.tier >= Tier.EXPERT
+        fun wantsRating(g: Game) = !g.deal.tier.isLineOnly
 
         /** Cache key: a new effort model or grader recomputes every past game (GAME.md "Report"). */
         fun key(id: String, rated: Boolean) = "$id|${Effort.VERSION}|g${Grader.VERSION}|${if (rated) "r" else "u"}"

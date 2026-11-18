@@ -20,8 +20,8 @@ enum class Motion { SYSTEM, REDUCED, FULL }
 
 /** Every nonogram setting (BUILD-PLAN §5, DECISIONS D4/D5/D7). Defaults are the decided defaults. */
 data class Settings(
-    /** Tiers shown on Home, bit k = [Tier] ordinal k. Easy, Medium, Hard by default; Expert, Master from Settings (D7). */
-    val tiers: Int = 0b00111,
+    /** Tiers shown on Home, bit k = [Tier] ordinal k. Fast, Easy, Medium, Hard by default; Expert, Master from Settings (D7). */
+    val tiers: Int = 0b100111,
     /** Sizes shown on Home, bit k = [Size] ordinal k. 5×5, 10×10, 15×15 by default; 10×15, 15×20, 20×20 from Settings (D7). */
     val sizes: Int = 0b000111,
     /** D4: flag mistakes (a wrong mark is refused and costs a life) with 3 lives or 1; or don't flag them. */
@@ -65,6 +65,8 @@ private val Context.store by preferencesDataStore("settings")
 class SettingsStore(private val context: Context) {
     private object K {
         val tiers = intPreferencesKey("tiers")
+        /** Set once Fast has been offered: older installs get Fast switched on once (it is on by default). */
+        val fastSeen = booleanPreferencesKey("fast_seen")
         val sizes = intPreferencesKey("sizes")
         val flag = booleanPreferencesKey("flag_mistakes")
         val lives = intPreferencesKey("lives")
@@ -91,7 +93,7 @@ class SettingsStore(private val context: Context) {
     private fun read(p: Preferences): Settings {
         val d = Settings()
         return Settings(
-            tiers = p[K.tiers] ?: d.tiers,
+            tiers = (p[K.tiers] ?: d.tiers).let { if (p[K.fastSeen] == null) it or (1 shl Tier.FAST.ordinal) else it },
             sizes = p[K.sizes] ?: d.sizes,
             flagMistakes = p[K.flag] ?: d.flagMistakes,
             lives = (p[K.lives] ?: d.lives).let { if (it == 1) 1 else 3 },
@@ -117,7 +119,7 @@ class SettingsStore(private val context: Context) {
     suspend fun update(f: (Settings) -> Settings) {
         context.store.edit { p ->
             val s = f(read(p))
-            p[K.tiers] = s.tiers; p[K.sizes] = s.sizes
+            p[K.tiers] = s.tiers; p[K.sizes] = s.sizes; p[K.fastSeen] = true
             p[K.flag] = s.flagMistakes; p[K.lives] = s.lives
             p[K.autoCross] = s.autoCross; p[K.contra] = s.contradictionFlag; p[K.check] = s.checkButton
             p[K.hints] = s.hints; p[K.longPress] = s.longPress; p[K.cookie] = s.cookieCross

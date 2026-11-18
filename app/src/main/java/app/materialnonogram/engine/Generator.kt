@@ -33,8 +33,8 @@ object Generator {
     const val VERSION = 2
 
     /** Fill bands in permille, `[lo, hi)`, indexed by [Tier.ordinal]. */
-    private val BAND_LO = intArrayOf(620, 550, 450, 300, 250)
-    private val BAND_HI = intArrayOf(700, 620, 550, 450, 380)
+    private val BAND_LO = intArrayOf(620, 550, 450, 300, 250, 620)
+    private val BAND_HI = intArrayOf(700, 620, 550, 450, 380, 700)
 
     /** Easy: L1 alone on the blank grid places at least this share of cells. */
     const val EASY_MIN_FIRST_PASS_PERMILLE = 400
@@ -50,7 +50,7 @@ object Generator {
     private val HARD_MIN_SWEEPS = intArrayOf(3, 5, 8, 6, 9, 11)
 
     /** Attempt budgets per tier. Accepts take 1–2 attempts for line tiers and tens to hundreds for look-ahead ones. */
-    private val MAX_ATTEMPTS = intArrayOf(2_000, 2_000, 4_000, 20_000, 20_000)
+    private val MAX_ATTEMPTS = intArrayOf(2_000, 2_000, 4_000, 20_000, 20_000, 2_000)
 
     fun band(tier: Tier): IntRange = BAND_LO[tier.ordinal] until BAND_HI[tier.ordinal]
     fun hardMinSweeps(size: Size): Int = HARD_MIN_SWEEPS[size.ordinal]
@@ -71,7 +71,7 @@ object Generator {
         if (!g.solved) return false
         val p1 = g.p1Steps
         return when (tier) {
-            Tier.EASY -> p1 == 0 && !g.usesP2 && g.firstPassPermille >= EASY_MIN_FIRST_PASS_PERMILLE
+            Tier.EASY, Tier.FAST -> p1 == 0 && !g.usesP2 && g.firstPassPermille >= EASY_MIN_FIRST_PASS_PERMILLE
             Tier.MEDIUM -> p1 == 0 && !g.usesP2
             Tier.HARD -> p1 == 0 && !g.usesP2 && g.sweeps >= HARD_MIN_SWEEPS[size.ordinal]
             Tier.EXPERT -> p1 in 1..EXPERT_MAX_P1 && !g.usesP2
@@ -159,5 +159,27 @@ object Generator {
         }
         // A fallback's grade may be partial (early stop); store the full record.
         return Generated(fb.puzzle, size, tier, seed, fb.attempt, fb.fillPermille, Grader.grade(fb.puzzle, allowP2 = false), fallback = true)
+    }
+
+    /** Share of a Fast puzzle's empty cells that start crossed. */
+    const val GIVEN_PERMILLE = 400
+
+    /**
+     * A Fast puzzle's givens: [GIVEN_PERMILLE] of its empty cells, chosen by a SplitMix64 seeded from the
+     * puzzle's own bits (FNV-1a), so they follow from the puzzle alone — a saved game recomputes the
+     * same ones, and nothing extra is stored. Integer only, like the rest of the generator.
+     */
+    fun givens(p: Puzzle): BooleanArray {
+        var hash = -0x340d631b7bdddcdbL
+        for (i in 0 until p.cells) { hash = hash xor (if (p.filled(i)) 1L else 0L); hash *= 0x100000001b3L }
+        hash = hash xor (p.w.toLong() shl 8) xor p.h.toLong()
+        val rng = SplitMix64(hash)
+        val empties = (0 until p.cells).filter { !p.filled(it) }
+        val keys = LongArray(empties.size) { k -> ((rng.next() ushr 33) shl 31) or empties[k].toLong() }
+        keys.sort()
+        val n = (empties.size * GIVEN_PERMILLE + 500) / 1000
+        val out = BooleanArray(p.cells)
+        for (k in 0 until n) out[(keys[k] and 0x7FFFFFFFL).toInt()] = true
+        return out
     }
 }

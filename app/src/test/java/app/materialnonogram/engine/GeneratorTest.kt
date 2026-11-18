@@ -67,12 +67,24 @@ class GeneratorTest {
             assertTrue(what, gen.fillPermille in Generator.band(gen.tier))
             assertEquals(what, gen.puzzle.filledCount(), (gen.size.cells * gen.fillPermille + 500) / 1000)
             when (gen.tier) {
-                Tier.EASY, Tier.MEDIUM, Tier.HARD -> assertTrue(what, gen.grade.isLineSolvable)
+                Tier.FAST, Tier.EASY, Tier.MEDIUM, Tier.HARD -> assertTrue(what, gen.grade.isLineSolvable)
                 Tier.EXPERT -> assertTrue(what, gen.grade.p1Steps in 1..Generator.EXPERT_MAX_P1)
                 Tier.MASTER -> assertTrue(what, gen.grade.p1Steps > Generator.EXPERT_MAX_P1)
             }
-            if (gen.tier == Tier.EASY) assertTrue(what, gen.grade.firstPassPermille >= Generator.EASY_MIN_FIRST_PASS_PERMILLE)
+            if (gen.tier == Tier.EASY || gen.tier == Tier.FAST) assertTrue(what, gen.grade.firstPassPermille >= Generator.EASY_MIN_FIRST_PASS_PERMILLE)
             if (gen.tier == Tier.HARD) assertTrue(what, gen.grade.sweeps >= Generator.hardMinSweeps(gen.size))
+        }
+    }
+
+    /** Fast's givens: 40 % of the empty cells, never a filled one, and the same every time for a puzzle. */
+    @Test fun fastGivensAreDeterministicEmptyCells() {
+        for (seed in 0L until 5L) {
+            val p = Generator.generate(Size.S10, Tier.FAST, seed).puzzle
+            val g = Generator.givens(p)
+            assertTrue(g.indices.none { g[it] && p.filled(it) })
+            val empties = (0 until p.cells).count { !p.filled(it) }
+            assertEquals((empties * Generator.GIVEN_PERMILLE + 500) / 1000, g.count { it })
+            assertTrue(g.contentEquals(Generator.givens(p)))
         }
     }
 

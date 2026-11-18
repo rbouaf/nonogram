@@ -103,6 +103,19 @@ class GameTest {
         assertEquals(4, h.stroke!!.count)                              // a plain stroke counts as before
     }
 
+    @Test fun fastGivensStartCrossedAreLoggedAndNeverChange() {
+        val g = Game("f", Deal(P5, Tier.FAST, 0L, 1), Rules.of(false))
+        g.placeGivens()
+        val given = (0 until 25).filter { g.isGiven(it) }
+        assertTrue(given.isNotEmpty())
+        assertTrue(given.all { g.board[it] == CROSSED && !P5.filled(it) })
+        assertArrayEquals(g.board, replay(g))                        // the log starts from the givens
+        val c = given.first()
+        g.tap(c, Tool.CROSS); g.tap(c, Tool.FILL)                    // neither clears nor overwrites a given
+        assertEquals(CROSSED, g.board[c])
+        assertEquals(given.size, Report(g).decided)                   // they count as decided from the start
+    }
+
     @Test fun aWhatIfStillAllowsUndoInFlagMode() {
         val g = game5(flag = true)
         g.beginWhatIf()

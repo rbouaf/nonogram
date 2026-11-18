@@ -31,7 +31,8 @@ object Shp {
     val difficulty: List<RoundedPolygon>
         get() = listOf(
             MaterialShapes.Circle, MaterialShapes.Cookie12Sided, MaterialShapes.Sunny,
-            MaterialShapes.VerySunny, MaterialShapes.SoftBurst, MaterialShapes.Burst, MaterialShapes.Boom,
+            // Index 5 is Fast (Tier.FAST's ordinal; it is shown first): a pill, smoother even than Easy's circle.
+            MaterialShapes.VerySunny, MaterialShapes.SoftBurst, MaterialShapes.Pill, MaterialShapes.Boom,
         )
 }
 

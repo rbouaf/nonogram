@@ -122,7 +122,7 @@ fun StatsScreen(model: AppModel, settings: Settings) {
     val scoped = all.filter { helpOk(it) }
     val games = scoped.filter { g -> (tierF < 0 || g.deal.tier.ordinal == tierF) && (sizeF == null || g.deal.size == sizeF) }
     val won = games.filter { it.status == Status.WON }
-    val playedTiers = all.map { it.deal.tier.ordinal }.distinct().sorted()
+    val playedTiers = all.map { it.deal.tier }.distinct().sortedBy { it.rank }.map { it.ordinal }
     val playedSizes = all.mapNotNull { it.deal.size }.distinct().sortedBy { it.ordinal }
 
     Column(Modifier.fillMaxSize().systemBarsPadding()) {
@@ -300,7 +300,7 @@ private fun Bests(model: AppModel, settings: Settings, scoped: List<Game>, tierF
     val buzz = LocalBuzz.current
     val m = bestsMatrix(scoped)
     val sizes = PSize.entries.filter { settings.sizeOn(it) || m.keys.any { k -> k.first == it.w && k.second == it.h } }
-    val tiers = Tier.entries.filter { settings.tierOn(it) || m.keys.any { k -> k.third == it } }
+    val tiers = Tier.byRank.filter { settings.tierOn(it) || m.keys.any { k -> k.third == it } }
     var open by remember { mutableStateOf<Triple<Int, Int, Tier>?>(null) }
     val weekAgo = System.currentTimeMillis() - 7 * 86_400_000L
     Card {

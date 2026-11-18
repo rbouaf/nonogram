@@ -134,6 +134,7 @@ class Buzz(context: Context) {
         2 -> play(P(PRIMITIVE_CLICK, 0.5f))
         3 -> play(P(PRIMITIVE_CLICK, 0.7f))
         4 -> play(P(PRIMITIVE_CLICK, 0.9f))
+        5 -> play(P(PRIMITIVE_TICK, 0.35f)) // Fast (Tier.FAST's ordinal): the lightest
         else -> play(P(PRIMITIVE_THUD, 0.6f))
     }
     fun length(k: Int) = play(*Array(k + 1) { P(PRIMITIVE_LOW_TICK, 0.7f, if (it == 0) 0 else 50) })

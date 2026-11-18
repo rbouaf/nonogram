@@ -52,6 +52,8 @@ data class Deal(
     val shareCode: String get() = ShareCode.encode(puzzle)
     /** "Copy as text": Simon Tatham's Pattern game ID. */
     val sgtId: String get() = SgtId.encode(puzzle)
+    /** Fast: the cells that start crossed, derived from the puzzle ([Generator.givens]); null for other tiers. */
+    val givens: BooleanArray? by lazy { if (tier == Tier.FAST) Generator.givens(puzzle) else null }
 
     companion object {
         fun of(g: Generated) = Deal(g.puzzle, g.tier, g.seed, g.generatorVersion)
@@ -140,10 +142,12 @@ fun bandOf(autoCross: Boolean, contradictionFlag: Boolean, flagMistakes: Boolean
  * | [UNDO], [REDO], [PAUSE], [RESUME], [HALFWAY], [WHATIF], [COMMIT], [DISCARD] | markers | | |
  */
 data class Ev(val t: Long, val kind: Char, val cell: Int = -1, val value: Int = 0, val x: Int = -1) {
-    val changesBoard: Boolean get() = kind == MARK || kind == HINT_MARK || kind == AUTO || kind == REVERT
+    val changesBoard: Boolean get() = kind == MARK || kind == HINT_MARK || kind == AUTO || kind == REVERT || kind == GIVEN
 
     companion object {
         const val MARK = 'M'
+        /** A Fast puzzle's starting cross, logged at t = 0 so every replay of the log starts from the same board. */
+        const val GIVEN = 'G'
         const val HINT_MARK = 'K'
         const val AUTO = 'A'
         const val REVERT = 'V'

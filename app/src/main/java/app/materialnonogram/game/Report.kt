@@ -222,6 +222,7 @@ class Report(val game: Game, rater: Rater? = null, isCancelled: () -> Boolean = 
                     set(e.cell, e.value.toByte())
                 }
                 Ev.REVERT -> set(e.cell, e.value.toByte())
+                Ev.GIVEN -> set(e.cell, e.value.toByte())
                 Ev.MISTAKE -> {
                     val r = rate(e.cell)
                     ss += Strike(e.t, e.cell, e.value.toByte(), true, kindOf(r), r?.rung, decided, b.copyOf(), r?.line ?: -1)
@@ -357,7 +358,7 @@ fun accolades(r: Report, prior: List<Game>): List<Accolade> {
     val best = sameKey.minOfOrNull { it.elapsed }
     val sameFast = prior.filter { it.status == Status.WON && g.sameKind(it) && it.id != g.id }.takeLast(30).map { it.elapsed }.sorted()
     val median = if (sameFast.size >= 10) sameFast[sameFast.size / 2] else null
-    val lookAhead = g.deal.tier >= Tier.EXPERT
+    val lookAhead = !g.deal.tier.isLineOnly
     val unaidedLa = r.lookAheadUnaided.size
     return listOf(
         Accolade("record", "New record", best == null || g.elapsed < best, if (best == null) "first of its kind" else "best was ${clock(best)}"),

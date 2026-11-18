@@ -107,6 +107,7 @@ val DIFFICULTY_TECH = listOf(
     "One line at a time, but you go round the board many times, each pass opening up the next. Sparser patterns.",
     "One to three times, no single line helps. Then imagine a cell filled, follow it, and watch a line break: that proves the cell is empty.",
     "Like Expert, but you have to look ahead four or more times. Only from 15×15 up.",
+    "Easy, with some of the empty cells already crossed for you: a quick game.",
 )
 
 /**
@@ -119,7 +120,7 @@ fun HomeScreen(model: AppModel, settings: Settings) {
     val cs = MaterialTheme.colorScheme
     val buzz = LocalBuzz.current
     val running = model.current
-    val enabled = Tier.entries.filter { settings.tierOn(it) }.map { it.ordinal }.ifEmpty { listOf(0) }
+    val enabled = Tier.byRank.filter { settings.tierOn(it) }.map { it.ordinal }.ifEmpty { listOf(0) }
     val sizes = PSize.entries.filter { settings.sizeOn(it) }.ifEmpty { listOf(PSize.S10) }
     var d by remember { mutableIntStateOf(settings.lastTier.takeIf { it in enabled } ?: enabled.first()) }
     var sz by remember { mutableStateOf(PSize.entries[settings.lastSize].takeIf { it in sizes } ?: sizes.first()) }

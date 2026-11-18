@@ -301,3 +301,10 @@ Generator.VERSION or a pattern id in the sub-seed domain, and the pattern record
 - Not built: the `.non` file export, the daily seed and its 4-character fingerprint (no daily puzzle, D10), and
   running the golden files under `connectedAndroidTest`.
 - `tools/engine-jvm` now builds the new engine; it no longer builds `legacy/engine`.
+
+## Fast (2026-11-17)
+
+`Tier.FAST` (ordinal 5, rank 0) uses Easy's fill band and acceptance rule under its own seed domain, so
+Easy's puzzles are unchanged and `Generator.VERSION` stays 2. `Generator.givens(p)` picks
+`GIVEN_PERMILLE` (400) of the empty cells with a SplitMix64 seeded from FNV-1a over the bitmap: integer
+only, a primitive sort of unique keys, deterministic per puzzle.

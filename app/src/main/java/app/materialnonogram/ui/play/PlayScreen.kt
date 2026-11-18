@@ -94,7 +94,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-val TIER_NAMES = listOf("Easy", "Medium", "Hard", "Expert", "Master")
+/** By [Tier.ordinal] (Fast is last here but shown first: see [Tier.byRank]). */
+val TIER_NAMES = listOf("Easy", "Medium", "Hard", "Expert", "Master", "Fast")
 
 /**
  * Play, "C · Blocks" (nonogram-mockups/html/README.md §3): Sudoku's two header bars, the field (clue

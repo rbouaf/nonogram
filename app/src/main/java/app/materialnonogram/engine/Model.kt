@@ -30,9 +30,22 @@ enum class Size(val w: Int, val h: Int, val code: Int) {
 
 /** Difficulty tiers (D7, BUILD-PLAN §2). The first three are line logic only; the last two need look-ahead. */
 enum class Tier {
-    EASY, MEDIUM, HARD, EXPERT, MASTER;
+    EASY, MEDIUM, HARD, EXPERT, MASTER,
+    /**
+     * Before Easy (user, 2026-11-17): an Easy puzzle that starts with some of its empty cells already
+     * crossed ([Generator.givens]). Appended, not inserted, so every other tier keeps its ordinal — the
+     * ordinal is in the generator's seed domain and in stored settings. Show tiers in [byRank] order.
+     */
+    FAST;
 
-    val isLineOnly: Boolean get() = this <= HARD
+    val isLineOnly: Boolean get() = this == FAST || this <= HARD
+    /** Place in the difficulty order: Fast 0, Easy 1 … Master 5. */
+    val rank: Int get() = if (this == FAST) 0 else ordinal + 1
+
+    companion object {
+        /** Easiest first, for every list a player sees. */
+        val byRank: List<Tier> = listOf(FAST, EASY, MEDIUM, HARD, EXPERT, MASTER)
+    }
 }
 
 /**

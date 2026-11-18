@@ -119,7 +119,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
             val old = current
             // Replacing is final (as Sudoku): the old game keeps its log as abandoned.
             if (old != null && old.status == Status.PLAYING) save(old)
-            val g = Game(id = newId(), deal = deal, rules = s.rules())
+            val g = Game(id = newId(), deal = deal, rules = s.rules()).also { it.placeGivens() }
             if (BuildConfig.DEBUG) logSolution(g)
             current = g
             save(g)
@@ -143,7 +143,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     /** Plays [deal] (a replay, or an opened code) as a fresh run under today's rules. Replacing a game in progress is final. */
     fun play(deal: Deal) {
         current?.takeIf { it.status == Status.PLAYING }?.let { old -> viewModelScope.launch { save(old) } }
-        val g = Game(id = newId(), deal = deal, rules = settings.value.rules())
+        val g = Game(id = newId(), deal = deal, rules = settings.value.rules()).also { it.placeGivens() }
         if (BuildConfig.DEBUG) logSolution(g)
         current = g
         viewModelScope.launch { save(g) }

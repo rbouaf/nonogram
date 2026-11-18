@@ -52,6 +52,9 @@ class Game(
     private val sol: ByteArray = deal.puzzle.solutionBoard()
     private val clues = deal.puzzle.clues
     private val lineCells: Array<IntArray> = Array(lineCount) { Lines.cells(w, h, it) }
+    /** Fast's starting crosses: fixed, never changed by a stroke, a tap, undo or a what-if. */
+    private val given: BooleanArray = deal.givens ?: BooleanArray(deal.cells)
+    fun isGiven(cell: Int): Boolean = given[cell]
 
     // Working state; published to Compose state by publish().
     private val cur: ByteArray = board.copyOf()
@@ -226,7 +229,7 @@ class Game(
     fun beginStroke(cell: Int, tool: Tool = this.tool, deferStart: Boolean = true): Boolean {
         if (!canPlay || cell !in 0 until cells) return false
         endStroke()
-        if (marksFinal && cur[cell] != UNKNOWN) {
+        if ((marksFinal && cur[cell] != UNKNOWN) || given[cell]) {
             // A judged mark is final: the start cell stays as it is, and the stroke marks only the
             // unknown cells it passes, so dragging from a filled cell carries on filling (user, 2026-11-17).
             val s = StrokeState(strokeSeq++, cell, tool, UNKNOWN, deferred = false)
@@ -249,6 +252,17 @@ class Game(
      * are final — a tap on one never clears it, and there is nothing to undo (user, 2026-11-17).
      */
     val marksFinal: Boolean get() = rules.flagMistakes && !inWhatIf
+
+    /**
+     * A new Fast game: cross its givens and log them at t = 0 (as [Ev.GIVEN]), so the board, every replay
+     * of the log and the Report all start from the same crosses. They are drawn like auto-crosses.
+     */
+    fun placeGivens() {
+        val g = deal.givens ?: return
+        if (events.isNotEmpty()) return
+        for (i in 0 until cells) if (g[i]) { cur[i] = CROSSED; curAuto[i] = true; events += Ev(0L, Ev.GIVEN, i, CROSSED.toInt()) }
+        publish()
+    }
 
     /** A tap: down and up on one cell with [tool]. */
     fun tap(cell: Int, tool: Tool = this.tool): Boolean {
@@ -289,7 +303,7 @@ class Game(
             for (k in walked + 1..kotlin.math.abs(t)) {
                 s.ext = k * dir
                 val cell = offCell(s, k * dir)
-                if (cur[cell] != s.from) continue // the start-cell rule: other states are passed over
+                if (cur[cell] != s.from || given[cell]) continue // the start-cell rule: other states are passed over; givens never change
                 if (lineClosed(cell, s.to)) continue // a finished line takes no more fills
                 if (!apply(s, cell, k * dir)) { showStroke(); return }
                 emit(Fx.Marked(cell, s.to, s.count))

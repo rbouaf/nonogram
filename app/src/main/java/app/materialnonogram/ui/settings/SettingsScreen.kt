@@ -111,7 +111,9 @@ fun SettingsScreen(model: AppModel, s: Settings) {
             Text("Settings", Modifier.padding(start = 20.dp, top = 4.dp, bottom = 12.dp), style = ts(45f, 500, cs.onSurface))
 
             Section("Difficulties on Home")
-            Pad { Checks(TIER_NAMES, { s.tierOn(Tier.entries[it]) }, shape = { Shp.difficulty[it] }, tips = DIFFICULTY_TECH) { k -> set { it.copy(tiers = it.tiers xor (1 shl k)) } } }
+            // Easiest first (Fast, Easy … Master); each tile toggles its tier's own bit.
+            val order = Tier.byRank
+            Pad { Checks(order.map { TIER_NAMES[it.ordinal] }, { s.tierOn(order[it]) }, shape = { Shp.difficulty[order[it].ordinal] }, tips = order.map { DIFFICULTY_TECH[it.ordinal] }) { k -> set { it.copy(tiers = it.tiers xor (1 shl order[k].ordinal)) } } }
             Info("info", "Tap one to show or hide it on Home. Hold one to hear what it asks of you.")
 
             Section("Sizes on Home")
